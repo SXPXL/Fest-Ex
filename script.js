@@ -1,20 +1,18 @@
-// CONFIGURATION
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz0SBabKwcnixEgEO93MnxA9zw6oRf6ckcBWJfTJ13Ha1JnyX_OIpUpDoXpPQO1Nq_yDA/exec"; 
-
-/// ==========================================
+// ==========================================
 // CONFIGURATION
 // ==========================================
 // PASTE YOUR DEPLOYED GOOGLE SCRIPT URL HERE
-
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz0SBabKwcnixEgEO93MnxA9zw6oRf6ckcBWJfTJ13Ha1JnyX_OIpUpDoXpPQO1Nq_yDA/exec";
 
 // ==========================================
 // STATE MANAGEMENT
 // ==========================================
 let appState = {
     currentFest: null,
+    editingTxnId: null, // NEW: Tracks which ID we are editing
     fests: [], 
     transactions: [], 
-    users: [], // Global Friend List
+    users: [],
     calCursorDate: new Date()
 };
 
@@ -29,7 +27,6 @@ async function init() {
         const response = await fetch(GOOGLE_SCRIPT_URL);
         const data = await response.json();
         
-        // Update State
         appState.fests = data.fests.map(f => ({
             ...f,
             startDate: new Date(f.startDate).toISOString().split('T')[0],
@@ -38,12 +35,11 @@ async function init() {
         
         appState.transactions = data.transactions.map(t => ({
              ...t,
+             id: String(t.id), // Ensure ID is a string for editing comparison
              date: new Date(t.date).toISOString().split('T')[0]
         }));
 
-        // Load Global Users
         appState.users = data.users || [];
-
         console.log("Data Synced!", appState);
         showPage('home');
 
@@ -57,187 +53,105 @@ async function init() {
 // NAVIGATION
 // ==========================================
 function toggleMenu() {
-    const drawer = document.getElementById('drawer');
+    document.getElementById('drawer').classList.toggle('open');
     const overlay = document.querySelector('.nav-overlay');
-    drawer.classList.toggle('open');
-    overlay.style.display = drawer.classList.contains('open') ? 'block' : 'none';
+    overlay.style.display = document.getElementById('drawer').classList.contains('open') ? 'block' : 'none';
 }
 
 function showPage(pageId) {
-    // Hide all pages
     ['page-home', 'page-create-event', 'page-fest-details', 'page-analytics'].forEach(id => {
         document.getElementById(id).classList.add('hidden');
     });
-
-    // Show target page
     document.getElementById(`page-${pageId}`).classList.remove('hidden');
-    
-    // Close Drawer
     document.getElementById('drawer').classList.remove('open');
     const overlay = document.querySelector('.nav-overlay');
     if(overlay) overlay.style.display = 'none';
 
-    // Trigger specific renders
     if (pageId === 'home') renderHome();
     if (pageId === 'create-event') renderCreateFestPage(); 
     if (pageId === 'analytics') renderAnalytics();
 }
 
 // ==========================================
-// HOME PAGE (FEST LIST)
+// HOME PAGE
 // ==========================================
 function renderHome() {
     const list = document.getElementById('active-fests-list');
     list.innerHTML = ""; 
 
     if (appState.fests.length === 0) {
-        list.innerHTML = `<div style="text-align:center; padding:40px; color:#666; border: 2px dashed #333; border-radius: 12px; margin-top:20px;">
-            <i class="fas fa-ghost" style="font-size: 2rem; margin-bottom: 10px;"></i><br>
-            No fests found.<br>Click <b>+ Add New Fest</b> to start.
-        </div>`;
+        list.innerHTML = `<div style="text-align:center; padding:40px; color:#666; border: 2px dashed #333; border-radius: 12px; margin-top:20px;">No fests found.<br>Click <b>+ Add New Fest</b></div>`;
         return;
     }
 
     appState.fests.forEach(fest => {
         const card = document.createElement('div');
         card.className = 'card';
-        card.style.cursor = 'pointer';
-        card.innerHTML = `
-            <div class="flex justify-between">
-                <h3 style="margin:0; color:#bb86fc;">${fest.name}</h3>
-                <span style="font-size:0.8rem; background:#333; padding:2px 6px; border-radius:4px;">${fest.startDate}</span>
-            </div>
-            <div style="margin-top:5px; color:#aaa; font-size:0.9rem;">
-                ${fest.participants.length} Participants
-            </div>
-        `;
+        card.innerHTML = `<div class="flex justify-between"><h3 style="margin:0; color:#bb86fc;">${fest.name}</h3><span style="font-size:0.8rem; background:#333; padding:2px 6px; border-radius:4px;">${fest.startDate}</span></div><div style="margin-top:5px; color:#aaa; font-size:0.9rem;">${fest.participants.length} Participants</div>`;
         card.onclick = () => openFestDetails(fest);
         list.appendChild(card);
     });
 }
 
 // ==========================================
-// CREATE FEST & USER MANAGEMENT
+// CREATE FEST & USERS
 // ==========================================
-
-// 1. Render User Selection List
 function renderCreateFestPage() {
     const container = document.getElementById('user-selection-list');
-    // Ensure the container exists in HTML (check previous step HTML update)
     if(!container) return; 
-
     container.innerHTML = "";
-
     if (appState.users.length === 0) {
-        container.innerHTML = "<div style='color:#666; font-size:0.9rem; padding:10px;'>No friends added yet. Add one above!</div>";
+        container.innerHTML = "<div style='color:#666; font-size:0.9rem; padding:10px;'>No friends added yet.</div>";
         return;
     }
-
     appState.users.forEach(u => {
-        container.innerHTML += `
-            <label class="flex" style="padding: 8px; border-bottom: 1px solid #333; cursor:pointer;">
-                <input type="checkbox" class="fest-user-check" value="${u.name}" style="width:20px; margin:0; margin-right:10px;">
-                ${u.name}
-            </label>
-        `;
+        container.innerHTML += `<label class="flex" style="padding: 8px; border-bottom: 1px solid #333; cursor:pointer;"><input type="checkbox" class="fest-user-check" value="${u.name}" style="width:20px; margin:0; margin-right:10px;">${u.name}</label>`;
     });
 }
 
-// 2. Add New Global User
 function addNewGlobalUser() {
     const nameInput = document.getElementById('newFriendName');
     const name = nameInput.value.trim();
     if (!name) return alert("Enter a name");
 
-    // Optimistic Update
     const newUser = { id: Date.now().toString(), name: name };
     appState.users.push(newUser);
-    
-    // Clear Input and Re-render list
     nameInput.value = "";
     renderCreateFestPage();
 
-    // Send to Backend
-    fetch(GOOGLE_SCRIPT_URL, {
-        method: "POST",
-        mode: "no-cors",
-        body: JSON.stringify({ action: "createUser", id: newUser.id, name: newUser.name })
-    });
+    fetch(GOOGLE_SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ action: "createUser", id: newUser.id, name: newUser.name }) });
 }
 
-// 3. Save Fest Setup
 function saveFestSetup() {
     const name = document.getElementById('festName').value;
     const start = document.getElementById('festStartDate').value;
     const end = document.getElementById('festEndDate').value;
-
-    // Get selected users
-    const selectedCheckboxes = document.querySelectorAll('.fest-user-check:checked');
-    const participants = Array.from(selectedCheckboxes).map(cb => cb.value);
+    const participants = Array.from(document.querySelectorAll('.fest-user-check:checked')).map(cb => cb.value);
 
     if(!name || !start || participants.length === 0) return alert("Fill details & select friends");
 
-    const fest = {
-        id: Date.now().toString(),
-        name: name,
-        startDate: start,
-        endDate: end || start,
-        participants: participants
-    };
-
+    const fest = { id: Date.now().toString(), name, startDate: start, endDate: end || start, participants };
     appState.fests.push(fest);
-    // Save to LocalStorage as backup
     localStorage.setItem('festData_fests', JSON.stringify(appState.fests));
 
-    // Send to Google Sheets
-    const payload = {
-        action: "createFest",
-        id: fest.id,
-        name: fest.name,
-        startDate: fest.startDate,
-        endDate: fest.endDate,
-        participants: fest.participants
-    };
-
-    fetch(GOOGLE_SCRIPT_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    })
-    .then(() => {
-        console.log("Sent successfully!");
-        alert("Fest Created!");
-    })
-    .catch(err => {
-        console.error("Failed to send:", err);
-        alert("Error saving to cloud.");
-    });
+    fetch(GOOGLE_SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ action: "createFest", ...fest }) });
     
-    // Clear Form & Open Fest
     document.getElementById('festName').value = "";
     openFestDetails(fest);
 }
 
 // ==========================================
-// FEST DETAILS (LIST & ADD)
+// FEST DETAILS & TRANSACTION LIST
 // ==========================================
-
 function openFestDetails(fest) {
     appState.currentFest = fest;
     showPage('fest-details'); 
-    
-    const titleEl = document.getElementById('fest-details-title');
-    if(titleEl) titleEl.innerText = fest.name;
-
-    // Reset Views (Show List, Hide Form)
+    document.getElementById('fest-details-title').innerText = fest.name;
     document.getElementById('view-fest-list').classList.remove('hidden');
     document.getElementById('view-add-expense').classList.add('hidden');
 
-    // Generate Date Tabs
     const tabsContainer = document.getElementById('fest-date-tabs');
     tabsContainer.innerHTML = "";
-    
     let curr = new Date(fest.startDate);
     let last = new Date(fest.endDate);
     let firstDateStr = fest.startDate;
@@ -246,9 +160,8 @@ function openFestDetails(fest) {
         let dateStr = curr.toISOString().split('T')[0];
         let tab = document.createElement('div');
         tab.className = `date-tab ${dateStr === firstDateStr ? 'active' : ''}`;
-        tab.innerText = dateStr.slice(5); // Show MM-DD
+        tab.innerText = dateStr.slice(5); 
         tab.dataset.date = dateStr;
-        
         tab.onclick = (e) => {
             document.querySelectorAll('.date-tab').forEach(t => t.classList.remove('active'));
             e.target.classList.add('active');
@@ -257,8 +170,6 @@ function openFestDetails(fest) {
         tabsContainer.appendChild(tab);
         curr.setDate(curr.getDate() + 1);
     }
-
-    // Render list for the first date
     renderExpenseList(firstDateStr);
 }
 
@@ -266,10 +177,7 @@ function renderExpenseList(dateStr) {
     const listContainer = document.getElementById('expense-list-container');
     listContainer.innerHTML = "";
 
-    // Filter: Current Fest AND Selected Date
-    const dailyTxns = appState.transactions.filter(t => 
-        t.eventId === appState.currentFest.id && t.date === dateStr
-    );
+    const dailyTxns = appState.transactions.filter(t => t.eventId === appState.currentFest.id && t.date === dateStr);
 
     if (dailyTxns.length === 0) {
         listContainer.innerHTML = `<div style="text-align:center; padding:30px; color:#666;">No expenses for this date.</div>`;
@@ -283,24 +191,36 @@ function renderExpenseList(dateStr) {
         const item = document.createElement('div');
         item.className = 'card';
         item.style.margin = "10px 15px"; 
+        item.style.position = "relative";
+        
         item.innerHTML = `
-            <div class="flex justify-between">
+            <div class="flex justify-between" style="padding-right: 30px;">
                 <span style="font-weight:bold; font-size:1.1rem;">${t.title}</span>
                 <span style="color:var(--secondary); font-weight:bold;">₹${t.amount}</span>
             </div>
-            <div style="font-size:0.85rem; color:#aaa; margin-top:5px;">
-                Paid by: ${payerText}
+            <div style="font-size:0.85rem; color:#aaa; margin-top:5px;">Paid by: ${payerText}</div>
+            
+            <div onclick="editTransaction('${t.id}')" style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); cursor: pointer; color: var(--primary); padding: 5px;">
+                <i class="fas fa-edit"></i>
             </div>
         `;
         listContainer.appendChild(item);
     });
 }
 
-// --- ADD EXPENSE FORM LOGIC ---
+// ==========================================
+// ADD / EDIT FORM LOGIC
+// ==========================================
 
 function showAddExpenseForm() {
     document.getElementById('view-fest-list').classList.add('hidden');
     document.getElementById('view-add-expense').classList.remove('hidden');
+    document.getElementById('expense-form-title').innerText = "New Expense";
+    
+    // Clear and Reset State
+    appState.editingTxnId = null;
+    document.getElementById('expTitle').value = "";
+    document.getElementById('expAmount').value = "";
     renderPayerUI(); 
 }
 
@@ -309,45 +229,65 @@ function hideAddExpenseForm() {
     document.getElementById('view-fest-list').classList.remove('hidden');
 }
 
+function editTransaction(txnId) {
+    const txn = appState.transactions.find(t => t.id === txnId);
+    if (!txn) return;
+
+    appState.editingTxnId = txnId; // Set Edit Mode
+    showAddExpenseForm();
+    document.getElementById('expense-form-title').innerText = "Edit Expense";
+
+    // Populate Data
+    document.getElementById('expTitle').value = txn.title;
+    document.getElementById('expAmount').value = txn.amount;
+
+    // Set Payers
+    document.querySelectorAll('.payer-check').forEach(cb => cb.checked = false);
+    document.querySelectorAll('.payer-input').forEach(inp => { inp.value = ""; inp.classList.add('hidden'); });
+
+    for (const [person, amount] of Object.entries(txn.payers)) {
+        const checkbox = document.querySelector(`.payer-check[value="${person}"]`);
+        if (checkbox) {
+            checkbox.checked = true;
+            if (Object.keys(txn.payers).length > 1) {
+                const input = document.getElementById(`pay-amt-${person}`);
+                input.classList.remove('hidden');
+                input.value = amount;
+            }
+        }
+    }
+
+    // Set Split
+    // Check if equal split (approximate float check)
+    const isEquallySplit = Object.values(txn.split).every(val => Math.abs(val - (txn.amount / Object.keys(txn.split).length)) < 0.1);
+    
+    document.getElementById('splitEquallyCheck').checked = isEquallySplit;
+    toggleSplitMode();
+
+    if (!isEquallySplit) {
+        for (const [person, amount] of Object.entries(txn.split)) {
+            const input = document.getElementById(`split-amt-${person}`);
+            if (input) input.value = amount;
+        }
+    }
+}
+
 function renderPayerUI() {
     const participants = appState.currentFest.participants;
-    const payerContainer = document.getElementById('payer-selection-area');
-    const splitContainer = document.getElementById('split-selection-area');
-    
-    payerContainer.innerHTML = "";
-    splitContainer.innerHTML = "";
+    const pContainer = document.getElementById('payer-selection-area');
+    const sContainer = document.getElementById('split-selection-area');
+    pContainer.innerHTML = ""; sContainer.innerHTML = "";
 
     participants.forEach(p => {
-        // Payer UI
-        payerContainer.innerHTML += `
-            <div class="user-select-row">
-                <div class="flex">
-                    <input type="checkbox" class="payer-check" value="${p}" onchange="handlePayerChange()" style="width:20px; margin:0;">
-                    <span style="margin-left:10px;">${p}</span>
-                </div>
-                <input type="number" class="amount-manual payer-input hidden" id="pay-amt-${p}" placeholder="0">
-            </div>`;
-        
-        // Split UI
-        splitContainer.innerHTML += `
-            <div class="user-select-row">
-                <span>${p}</span>
-                <input type="number" class="amount-manual split-input" id="split-amt-${p}" placeholder="0">
-            </div>`;
+        pContainer.innerHTML += `<div class="user-select-row"><div class="flex"><input type="checkbox" class="payer-check" value="${p}" onchange="handlePayerChange()" style="width:20px; margin-right:10px;">${p}</div><input type="number" class="amount-manual payer-input hidden" id="pay-amt-${p}" placeholder="0"></div>`;
+        sContainer.innerHTML += `<div class="user-select-row"><span>${p}</span><input type="number" class="amount-manual split-input" id="split-amt-${p}" placeholder="0"></div>`;
     });
 }
 
 function handlePayerChange() {
     const checked = document.querySelectorAll('.payer-check:checked');
-    const inputs = document.querySelectorAll('.payer-input');
-    
-    inputs.forEach(i => i.classList.add('hidden'));
-
-    if (checked.length > 1) {
-        checked.forEach(chk => {
-            document.getElementById(`pay-amt-${chk.value}`).classList.remove('hidden');
-        });
-    }
+    document.querySelectorAll('.payer-input').forEach(i => i.classList.add('hidden'));
+    if (checked.length > 1) checked.forEach(chk => document.getElementById(`pay-amt-${chk.value}`).classList.remove('hidden'));
 }
 
 function toggleSplitMode() {
@@ -361,9 +301,7 @@ function submitTransaction() {
     const fest = appState.currentFest;
     const title = document.getElementById('expTitle').value;
     const total = parseFloat(document.getElementById('expAmount').value);
-    
-    const activeTab = document.querySelector('.date-tab.active');
-    const date = activeTab ? activeTab.dataset.date : fest.startDate;
+    const date = document.querySelector('.date-tab.active').dataset.date;
 
     if (!title || !total) return alert("Enter details");
 
@@ -378,12 +316,11 @@ function submitTransaction() {
         paidSum += val;
     });
 
-    if (Math.abs(paidSum - total) > 1) return alert(`Paid amount (${paidSum}) != Total (${total})`);
+    if (Math.abs(paidSum - total) > 1) return alert("Paid amount mismatch");
 
     let split = {};
     if (document.getElementById('splitEquallyCheck').checked) {
-        let share = total / fest.participants.length;
-        fest.participants.forEach(p => split[p] = share);
+        fest.participants.forEach(p => split[p] = total / fest.participants.length);
     } else {
         let splitSum = 0;
         document.querySelectorAll('.split-input').forEach(inp => {
@@ -394,53 +331,44 @@ function submitTransaction() {
         if (Math.abs(splitSum - total) > 1) return alert("Split amount mismatch");
     }
 
-    const txn = { 
-        eventId: fest.id, 
-        date: date, 
-        title: title, 
-        amount: total, 
-        payers: payers, 
-        split: split 
-    };
+    // --- SUBMIT LOGIC (CREATE OR EDIT) ---
+    if (appState.editingTxnId) {
+        // UPDATE EXISTING
+        const index = appState.transactions.findIndex(t => t.id === appState.editingTxnId);
+        if (index !== -1) {
+            appState.transactions[index] = { ...appState.transactions[index], title, amount: total, payers, split };
+            
+            const payload = { action: "editExpense", id: appState.editingTxnId, festId: fest.id, date: appState.transactions[index].date, title, amount: total, payers, split };
+            fetch(GOOGLE_SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+        }
+    } else {
+        // CREATE NEW
+        const id = Date.now().toString();
+        const txn = { id, eventId: fest.id, date, title, amount: total, payers, split };
+        appState.transactions.push(txn);
+        
+        const payload = { action: "addExpense", id, festId: txn.eventId, date, title, amount: total, payers, split };
+        fetch(GOOGLE_SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+    }
 
-    appState.transactions.push(txn);
     localStorage.setItem('festData_txns', JSON.stringify(appState.transactions));
-
-    const payload = {
-        action: "addExpense",
-        festId: txn.eventId,
-        date: txn.date,
-        title: txn.title,
-        amount: txn.amount,
-        payers: txn.payers,
-        split: txn.split
-    };
-
-    fetch(GOOGLE_SCRIPT_URL, { 
-        method: "POST", 
-        mode: "no-cors", 
-        body: JSON.stringify(payload) 
-    });
-
-    document.getElementById('expTitle').value = "";
-    document.getElementById('expAmount').value = "";
-    hideAddExpenseForm(); 
-    renderExpenseList(date); 
+    hideAddExpenseForm();
+    renderExpenseList(date);
 }
 
 // ==========================================
-// ANALYTICS
+// ANALYTICS & SETTLEMENT
 // ==========================================
 
 function renderAnalytics() {
     const txns = appState.transactions;
-    const total = txns.reduce((sum, t) => sum + t.amount, 0);
+    const total = txns.reduce((sum, t) => sum + parseFloat(t.amount), 0);
     document.getElementById('stat-total').innerText = `₹${total}`;
 
     let payerStats = {};
     txns.forEach(t => {
         for(let [p, amt] of Object.entries(t.payers)) {
-            payerStats[p] = (payerStats[p] || 0) + amt;
+            payerStats[p] = (payerStats[p] || 0) + parseFloat(amt);
         }
     });
     
@@ -457,54 +385,24 @@ function renderAnalytics() {
 function renderChart(txns) {
     const ctx = document.getElementById('spendChart').getContext('2d');
     let daily = {};
-    txns.forEach(t => {
-        daily[t.date] = (daily[t.date] || 0) + t.amount;
-    });
+    txns.forEach(t => { daily[t.date] = (daily[t.date] || 0) + parseFloat(t.amount); });
 
     if(window.myChart) window.myChart.destroy();
-
     window.myChart = new Chart(ctx, {
         type: 'bar',
-        data: {
-            labels: Object.keys(daily),
-            datasets: [{
-                label: 'Spending',
-                data: Object.values(daily),
-                backgroundColor: '#bb86fc',
-                borderRadius: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                y: { 
-                    grid: { color: '#333' },
-                    beginAtZero: true
-                },
-                x: { 
-                    grid: { display: false } 
-                }
-            },
-            plugins: {
-                legend: { display: false }
-            }
-        }
+        data: { labels: Object.keys(daily), datasets: [{ label: 'Spending', data: Object.values(daily), backgroundColor: '#bb86fc', borderRadius: 4 }] },
+        options: { responsive: true, maintainAspectRatio: false, scales: { y: { grid: { color: '#333' }, beginAtZero: true }, x: { grid: { display: false } } }, plugins: { legend: { display: false } } }
     });
 }
 
-// --- HEATMAP LOGIC ---
 function renderCalendar() {
     const container = document.getElementById('calendar-months-container');
     container.innerHTML = "";
     
     let dailyTotals = {};
-    appState.transactions.forEach(t => {
-        dailyTotals[t.date] = (dailyTotals[t.date] || 0) + t.amount;
-    });
+    appState.transactions.forEach(t => { dailyTotals[t.date] = (dailyTotals[t.date] || 0) + parseFloat(t.amount); });
 
     const today = new Date();
-    // Start of the month 11 months ago
     let loopDate = new Date(today.getFullYear(), today.getMonth() - 11, 1);
 
     for (let i = 0; i < 12; i++) {
@@ -514,30 +412,18 @@ function renderCalendar() {
 
         const monthBlock = document.createElement('div');
         monthBlock.className = 'month-block';
-        
-        const label = document.createElement('div');
-        label.className = 'month-label';
-        label.innerText = monthName;
-        monthBlock.appendChild(label);
-
+        monthBlock.innerHTML = `<div class="month-label">${monthName}</div>`;
         const grid = document.createElement('div');
         grid.className = 'month-grid';
 
         const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-        const firstDayOfWeek = new Date(year, monthIndex, 1).getDay(); // 0 (Sun) to 6 (Sat)
+        const firstDayOfWeek = new Date(year, monthIndex, 1).getDay();
         
-        // Add Empty Placeholders
-        for(let j=0; j<firstDayOfWeek; j++) {
-            const emptyBox = document.createElement('div');
-            emptyBox.className = 'heatmap-box empty';
-            grid.appendChild(emptyBox);
-        }
+        for(let j=0; j<firstDayOfWeek; j++) grid.innerHTML += `<div class="heatmap-box empty"></div>`;
 
-        // Add Days
         for(let day=1; day<=daysInMonth; day++) {
             const dateStr = `${year}-${String(monthIndex+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
             const amount = dailyTotals[dateStr] || 0;
-
             let level = 'level-0';
             if (amount > 0) level = 'level-1';
             if (amount > 500) level = 'level-2';
@@ -546,76 +432,46 @@ function renderCalendar() {
 
             const box = document.createElement('div');
             box.className = `heatmap-box ${level}`;
-            
             box.addEventListener('mouseenter', (e) => showTooltip(e, dateStr, amount));
             box.addEventListener('mousemove', (e) => moveTooltip(e));
             box.addEventListener('mouseleave', hideTooltip);
-
             grid.appendChild(box);
         }
-
         monthBlock.appendChild(grid);
         container.appendChild(monthBlock);
-
         loopDate.setMonth(loopDate.getMonth() + 1);
     }
-
-    const wrapper = document.querySelector('.heatmap-scroll-wrapper');
-    if(wrapper) {
-        setTimeout(() => { wrapper.scrollLeft = wrapper.scrollWidth; }, 100);
-    }
+    setTimeout(() => { document.querySelector('.heatmap-scroll-wrapper').scrollLeft = 9999; }, 100);
 }
 
-// --- TOOLTIP LOGIC ---
+// Tooltip (Keep existing logic)
 const tooltipEl = document.getElementById('heatmap-tooltip');
-
 function showTooltip(e, date, amount) {
     if(!tooltipEl) return;
-    const dateObj = new Date(date);
-    const dateText = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    
+    const dateText = new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     tooltipEl.innerHTML = `<strong>${dateText}</strong><br>₹${amount}`;
     tooltipEl.style.display = 'block';
     moveTooltip(e);
 }
-
 function moveTooltip(e) {
     if(!tooltipEl) return;
     const x = e.clientX + 10;
     const y = e.clientY - 40;
-    
-    if (x + 100 > window.innerWidth) {
-        tooltipEl.style.left = (e.clientX - 110) + 'px';
-    } else {
-        tooltipEl.style.left = x + 'px';
-    }
+    tooltipEl.style.left = (x + 100 > window.innerWidth ? e.clientX - 110 : x) + 'px';
     tooltipEl.style.top = y + 'px';
 }
+function hideTooltip() { if(tooltipEl) tooltipEl.style.display = 'none'; }
 
-function hideTooltip() {
-    if(tooltipEl) tooltipEl.style.display = 'none';
-}
-
-// ==========================================
-// SETTLEMENT LOGIC (THE MISSING FUNCTIONS)
-// ==========================================
-
+// --- SETTLEMENT LOGIC (ROBUST) ---
 function showSettlementModal() {
     const modal = document.getElementById('settlement-modal');
-    if(modal) {
-        modal.classList.remove('hidden');
-        calculateSettlement(appState.currentFest.id, 'fest-settlement-plan');
-    }
+    modal.classList.remove('hidden');
+    calculateSettlement(appState.currentFest.id, 'fest-settlement-plan');
 }
-
-function closeSettlementModal() {
-    const modal = document.getElementById('settlement-modal');
-    if(modal) modal.classList.add('hidden');
-}
+function closeSettlementModal() { document.getElementById('settlement-modal').classList.add('hidden'); }
 
 function calculateSettlement(festId, outputElementId) {
     if (!festId) return;
-
     const festTxns = appState.transactions.filter(t => t.eventId === festId);
     const container = document.getElementById(outputElementId);
 
@@ -624,80 +480,49 @@ function calculateSettlement(festId, outputElementId) {
         return;
     }
 
-    // 1. Calculate Net Balances
     let balances = {};
     appState.currentFest.participants.forEach(p => balances[p] = 0);
 
     festTxns.forEach(t => {
-        // Add Payers (+)
-        for (const [person, amount] of Object.entries(t.payers)) {
-            balances[person] = (balances[person] || 0) + parseFloat(amount);
-        }
-        // Subtract Consumers (-)
-        for (const [person, amount] of Object.entries(t.split)) {
-            balances[person] = (balances[person] || 0) - parseFloat(amount);
-        }
+        for (const [person, amount] of Object.entries(t.payers)) balances[person] = (balances[person] || 0) + parseFloat(amount);
+        for (const [person, amount] of Object.entries(t.split)) balances[person] = (balances[person] || 0) - parseFloat(amount);
     });
 
-    // 2. Separate into Debtors and Creditors
-    let debtors = [];
-    let creditors = [];
-
-    // Helper to round to 2 decimals to avoid floating point bugs (0.0000001)
-    const round2 = (num) => Math.round((num + Number.EPSILON) * 100) / 100;
-
+    let debtors = [], creditors = [];
     for (const [person, amount] of Object.entries(balances)) {
-        const val = round2(amount);
+        const val = Math.round(amount * 100) / 100; // Round to 2 decimals
         if (val < -0.01) debtors.push({ name: person, amount: val });
         if (val > 0.01) creditors.push({ name: person, amount: val });
     }
 
     let html = "";
-
-    // 3. Greedy Matching Loop
-    // We process until one of the lists is empty
     while (debtors.length > 0 && creditors.length > 0) {
-        // Sort to match Highest Debt with Highest Credit (Minimizes transactions)
-        debtors.sort((a, b) => a.amount - b.amount); // Ascending (e.g. -500, -100) -500 is "bigger" debt
-        creditors.sort((a, b) => b.amount - a.amount); // Descending (e.g. 500, 100)
+        // Greedy Sort: Match biggest debtor with biggest creditor
+        debtors.sort((a, b) => a.amount - b.amount); // Ascending (most negative first)
+        creditors.sort((a, b) => b.amount - a.amount); // Descending (most positive first)
 
         let debtor = debtors[0];
         let creditor = creditors[0];
-
-        // The amount to settle is the minimum of what Debtor owes vs what Creditor is owed
         let amount = Math.min(Math.abs(debtor.amount), creditor.amount);
-        amount = round2(amount);
+        amount = Math.round(amount * 100) / 100;
 
         if (amount > 0) {
             html += `<div style="padding:10px; border-bottom:1px solid #333; display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:0.95rem;">
-                    <b style="color:#cf6679;">${debtor.name}</b> pays <b style="color:#03dac6;">${creditor.name}</b>
-                </span>
+                <span><b style="color:#cf6679">${debtor.name}</b> pays <b style="color:#03dac6">${creditor.name}</b></span>
                 <span style="color:#fff; font-weight:bold;">₹${amount}</span>
             </div>`;
         }
 
-        // Adjust balances
-        debtor.amount = round2(debtor.amount + amount);
-        creditor.amount = round2(creditor.amount - amount);
+        debtor.amount = Math.round((debtor.amount + amount) * 100) / 100;
+        creditor.amount = Math.round((creditor.amount - amount) * 100) / 100;
 
-        // Remove from list if settled (close to 0)
-        if (Math.abs(debtor.amount) < 0.01) {
-            debtors.shift(); // Remove first element
-        }
-        if (creditor.amount < 0.01) {
-            creditors.shift(); // Remove first element
-        }
+        if (Math.abs(debtor.amount) < 0.01) debtors.shift();
+        if (creditor.amount < 0.01) creditors.shift();
     }
 
-    if (html === "") {
-        html = "<div style='text-align:center; padding:20px; color:#03dac6;'>All settled up! 🎉</div>";
-    }
-
+    if (html === "") html = "<div style='text-align:center; padding:20px; color:#03dac6;'>All settled up! 🎉</div>";
     container.innerHTML = html;
 }
 
-// ==========================================
-// START APP
-// ==========================================
+// START
 init();
