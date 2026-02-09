@@ -3,13 +3,12 @@
 // ==========================================
 // PASTE YOUR DEPLOYED GOOGLE SCRIPT URL HERE
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz0SBabKwcnixEgEO93MnxA9zw6oRf6ckcBWJfTJ13Ha1JnyX_OIpUpDoXpPQO1Nq_yDA/exec";
-
 // ==========================================
 // STATE MANAGEMENT
 // ==========================================
 let appState = {
     currentFest: null,
-    editingTxnId: null, // NEW: Tracks which ID we are editing
+    editingTxnId: null, // Tracks ID for editing
     fests: [], 
     transactions: [], 
     users: [],
@@ -35,7 +34,7 @@ async function init() {
         
         appState.transactions = data.transactions.map(t => ({
              ...t,
-             id: String(t.id), // Ensure ID is a string for editing comparison
+             id: String(t.id),
              date: new Date(t.date).toISOString().split('T')[0]
         }));
 
@@ -177,7 +176,9 @@ function renderExpenseList(dateStr) {
     const listContainer = document.getElementById('expense-list-container');
     listContainer.innerHTML = "";
 
-    const dailyTxns = appState.transactions.filter(t => t.eventId === appState.currentFest.id && t.date === dateStr);
+    const dailyTxns = appState.transactions.filter(t => 
+        t.eventId === appState.currentFest.id && t.date === dateStr
+    );
 
     if (dailyTxns.length === 0) {
         listContainer.innerHTML = `<div style="text-align:center; padding:30px; color:#666;">No expenses for this date.</div>`;
@@ -194,20 +195,24 @@ function renderExpenseList(dateStr) {
         item.style.position = "relative";
         
         item.innerHTML = `
-            <div class="flex justify-between" style="padding-right: 30px;">
+            <div class="flex justify-between" style="padding-right: 60px;">
                 <span style="font-weight:bold; font-size:1.1rem;">${t.title}</span>
                 <span style="color:var(--secondary); font-weight:bold;">₹${t.amount}</span>
             </div>
             <div style="font-size:0.85rem; color:#aaa; margin-top:5px;">Paid by: ${payerText}</div>
             
-            <div onclick="editTransaction('${t.id}')" style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); cursor: pointer; color: var(--primary); padding: 5px;">
-                <i class="fas fa-edit"></i>
+            <div style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); display:flex; gap:15px;">
+                <div onclick="editTransaction('${t.id}')" style="cursor: pointer; color: var(--primary);">
+                    <i class="fas fa-edit"></i>
+                </div>
+                <div onclick="deleteTransaction('${t.id}')" style="cursor: pointer; color: var(--error);">
+                    <i class="fas fa-trash"></i>
+                </div>
             </div>
         `;
         listContainer.appendChild(item);
     });
 }
-
 // ==========================================
 // ADD / EDIT FORM LOGIC
 // ==========================================
@@ -216,8 +221,6 @@ function showAddExpenseForm() {
     document.getElementById('view-fest-list').classList.add('hidden');
     document.getElementById('view-add-expense').classList.remove('hidden');
     document.getElementById('expense-form-title').innerText = "New Expense";
-    
-    // Clear and Reset State
     appState.editingTxnId = null;
     document.getElementById('expTitle').value = "";
     document.getElementById('expAmount').value = "";
@@ -233,15 +236,13 @@ function editTransaction(txnId) {
     const txn = appState.transactions.find(t => t.id === txnId);
     if (!txn) return;
 
-    appState.editingTxnId = txnId; // Set Edit Mode
+    appState.editingTxnId = txnId;
     showAddExpenseForm();
     document.getElementById('expense-form-title').innerText = "Edit Expense";
 
-    // Populate Data
     document.getElementById('expTitle').value = txn.title;
     document.getElementById('expAmount').value = txn.amount;
 
-    // Set Payers
     document.querySelectorAll('.payer-check').forEach(cb => cb.checked = false);
     document.querySelectorAll('.payer-input').forEach(inp => { inp.value = ""; inp.classList.add('hidden'); });
 
@@ -257,8 +258,6 @@ function editTransaction(txnId) {
         }
     }
 
-    // Set Split
-    // Check if equal split (approximate float check)
     const isEquallySplit = Object.values(txn.split).every(val => Math.abs(val - (txn.amount / Object.keys(txn.split).length)) < 0.1);
     
     document.getElementById('splitEquallyCheck').checked = isEquallySplit;
@@ -331,7 +330,6 @@ function submitTransaction() {
         if (Math.abs(splitSum - total) > 1) return alert("Split amount mismatch");
     }
 
-    // --- SUBMIT LOGIC (CREATE OR EDIT) ---
     if (appState.editingTxnId) {
         // UPDATE EXISTING
         const index = appState.transactions.findIndex(t => t.id === appState.editingTxnId);
@@ -441,10 +439,9 @@ function renderCalendar() {
         container.appendChild(monthBlock);
         loopDate.setMonth(loopDate.getMonth() + 1);
     }
-    setTimeout(() => { document.querySelector('.heatmap-scroll-wrapper').scrollLeft = 9999; }, 100);
+    setTimeout(() => { document.querySelector('.heatmap-scroll-wrapper').scrollLeft = 9999; }, 150);
 }
 
-// Tooltip (Keep existing logic)
 const tooltipEl = document.getElementById('heatmap-tooltip');
 function showTooltip(e, date, amount) {
     if(!tooltipEl) return;
@@ -462,7 +459,7 @@ function moveTooltip(e) {
 }
 function hideTooltip() { if(tooltipEl) tooltipEl.style.display = 'none'; }
 
-// --- SETTLEMENT LOGIC (ROBUST) ---
+// --- SETTLEMENT LOGIC ---
 function showSettlementModal() {
     const modal = document.getElementById('settlement-modal');
     modal.classList.remove('hidden');
@@ -490,16 +487,15 @@ function calculateSettlement(festId, outputElementId) {
 
     let debtors = [], creditors = [];
     for (const [person, amount] of Object.entries(balances)) {
-        const val = Math.round(amount * 100) / 100; // Round to 2 decimals
+        const val = Math.round(amount * 100) / 100;
         if (val < -0.01) debtors.push({ name: person, amount: val });
         if (val > 0.01) creditors.push({ name: person, amount: val });
     }
 
     let html = "";
     while (debtors.length > 0 && creditors.length > 0) {
-        // Greedy Sort: Match biggest debtor with biggest creditor
-        debtors.sort((a, b) => a.amount - b.amount); // Ascending (most negative first)
-        creditors.sort((a, b) => b.amount - a.amount); // Descending (most positive first)
+        debtors.sort((a, b) => a.amount - b.amount);
+        creditors.sort((a, b) => b.amount - a.amount);
 
         let debtor = debtors[0];
         let creditor = creditors[0];
@@ -522,6 +518,33 @@ function calculateSettlement(festId, outputElementId) {
 
     if (html === "") html = "<div style='text-align:center; padding:20px; color:#03dac6;'>All settled up! 🎉</div>";
     container.innerHTML = html;
+}
+
+function deleteTransaction(txnId) {
+    if(!confirm("Are you sure you want to delete this expense?")) return;
+
+    // 1. Remove from Local State
+    appState.transactions = appState.transactions.filter(t => t.id !== txnId);
+
+    // 2. Save & Refresh UI
+    localStorage.setItem('festData_txns', JSON.stringify(appState.transactions));
+    
+    // Get current date to refresh the correct list view
+    const activeTab = document.querySelector('.date-tab.active');
+    const dateStr = activeTab ? activeTab.dataset.date : appState.currentFest.startDate;
+    renderExpenseList(dateStr);
+
+    // 3. Send Delete Command to Backend
+    const payload = {
+        action: "deleteExpense",
+        id: txnId
+    };
+
+    fetch(GOOGLE_SCRIPT_URL, { 
+        method: "POST", 
+        mode: "no-cors", 
+        body: JSON.stringify(payload) 
+    });
 }
 
 // START
