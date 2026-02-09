@@ -74,10 +74,11 @@
         <a class="nav-item" onclick="showPage('home')">Home</a>
         <a class="nav-item" onclick="showPage('create-event')">New Fest</a>
         <a class="nav-item" onclick="showPage('analytics')">Analytics</a>
+        <a class="nav-item" onclick="toggleAdminLogin()" id="admin-btn">Login</a>
     </div>
 
     <div id="page-home">
-        <div class="card" onclick="showPage('create-event')" style="text-align:center; border: 2px dashed #444; cursor:pointer;">+ Add New Fest</div>
+        <div id="add-fest-card" class="card" onclick="showPage('create-event')" style="text-align:center; border: 2px dashed #444; cursor:pointer;">+ Add New Fest</div>
         <div id="active-fests-list"></div>
     </div>
 
@@ -115,7 +116,7 @@
 
         <div id="view-fest-list">
             <div id="expense-list-container" style="padding-bottom: 80px;"></div>
-            <button onclick="showAddExpenseForm()" style="position: fixed; bottom: 20px; right: 20px; width: 60px; height: 60px; border-radius: 50%; font-size: 24px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); z-index:100;"><i class="fas fa-plus"></i></button>
+            <button id="add-expense-btn" onclick="showAddExpenseForm()" style="position: fixed; bottom: 20px; right: 20px; width: 60px; height: 60px; border-radius: 50%; font-size: 24px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); z-index:100;"><i class="fas fa-plus"></i></button>
         </div>
 
         <div id="view-add-expense" class="hidden">

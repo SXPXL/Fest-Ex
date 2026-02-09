@@ -1,19 +1,29 @@
 // ==========================================
 // CONFIGURATION
 // ==========================================
-// PASTE YOUR DEPLOYED GOOGLE SCRIPT URL HERE
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz0SBabKwcnixEgEO93MnxA9zw6oRf6ckcBWJfTJ13Ha1JnyX_OIpUpDoXpPQO1Nq_yDA/exec";
+
+
 // ==========================================
 // STATE MANAGEMENT
 // ==========================================
 let appState = {
     currentFest: null,
-    editingTxnId: null, // Tracks ID for editing
+    editingTxnId: null,
     fests: [], 
     transactions: [], 
     users: [],
-    calCursorDate: new Date()
+    calCursorDate: new Date(),
+    adminPassword: localStorage.getItem('fest_admin_pass') || null 
 };
+
+// HELPER: Fixes the "Day Back" bug by forcing Local Time conversion
+function getLocalISODate(dateObj) {
+    // Takes a date object and returns "YYYY-MM-DD" in local timezone
+    const offset = dateObj.getTimezoneOffset() * 60000; // Offset in milliseconds
+    const localDate = new Date(dateObj.getTime() - offset);
+    return localDate.toISOString().split('T')[0];
+}
 
 // ==========================================
 // INITIALIZATION
@@ -22,20 +32,23 @@ async function init() {
     const list = document.getElementById('active-fests-list');
     if(list) list.innerHTML = "Loading from cloud...";
     
+    updateAdminUI();
+
     try {
         const response = await fetch(GOOGLE_SCRIPT_URL);
         const data = await response.json();
         
+        // FIX 1: Use getLocalISODate instead of pure toISOString
         appState.fests = data.fests.map(f => ({
             ...f,
-            startDate: new Date(f.startDate).toISOString().split('T')[0],
-            endDate: new Date(f.endDate).toISOString().split('T')[0]
+            startDate: getLocalISODate(new Date(f.startDate)),
+            endDate: getLocalISODate(new Date(f.endDate))
         }));
         
         appState.transactions = data.transactions.map(t => ({
              ...t,
              id: String(t.id),
-             date: new Date(t.date).toISOString().split('T')[0]
+             date: getLocalISODate(new Date(t.date))
         }));
 
         appState.users = data.users || [];
@@ -45,6 +58,44 @@ async function init() {
     } catch (error) {
         alert("Failed to load data. Check internet.");
         console.error(error);
+    }
+}
+
+// ==========================================
+// ADMIN / AUTHENTICATION LOGIC
+// ==========================================
+function toggleAdminLogin() {
+    if (appState.adminPassword) {
+        if(confirm("Logout of Admin Mode?")) {
+            appState.adminPassword = null;
+            localStorage.removeItem('fest_admin_pass');
+            location.reload(); 
+        }
+    } else {
+        const pass = prompt("Enter Admin Password to Edit:");
+        if (pass) {
+            appState.adminPassword = pass;
+            localStorage.setItem('fest_admin_pass', pass);
+            updateAdminUI();
+            if (appState.currentFest) {
+                renderExpenseList(document.querySelector('.date-tab.active')?.dataset.date || appState.currentFest.startDate);
+                const btn = document.getElementById('add-expense-btn'); // Safe check
+                if(btn) btn.classList.remove('hidden');
+            }
+            if(!document.getElementById('page-home').classList.contains('hidden')) renderHome();
+        }
+    }
+}
+
+function updateAdminUI() {
+    const btn = document.getElementById('admin-btn');
+    if(!btn) return;
+    if (appState.adminPassword) {
+        btn.innerHTML = '<i class="fas fa-unlock"></i> Admin';
+        btn.style.color = "#03dac6";
+    } else {
+        btn.innerHTML = '<i class="fas fa-lock"></i> Login';
+        btn.style.color = "#aaa";
     }
 }
 
@@ -63,8 +114,7 @@ function showPage(pageId) {
     });
     document.getElementById(`page-${pageId}`).classList.remove('hidden');
     document.getElementById('drawer').classList.remove('open');
-    const overlay = document.querySelector('.nav-overlay');
-    if(overlay) overlay.style.display = 'none';
+    document.querySelector('.nav-overlay').style.display = 'none';
 
     if (pageId === 'home') renderHome();
     if (pageId === 'create-event') renderCreateFestPage(); 
@@ -78,8 +128,12 @@ function renderHome() {
     const list = document.getElementById('active-fests-list');
     list.innerHTML = ""; 
 
+    const addCard = document.getElementById('add-fest-card');
+    if(appState.adminPassword) addCard.classList.remove('hidden');
+    else addCard.classList.add('hidden');
+
     if (appState.fests.length === 0) {
-        list.innerHTML = `<div style="text-align:center; padding:40px; color:#666; border: 2px dashed #333; border-radius: 12px; margin-top:20px;">No fests found.<br>Click <b>+ Add New Fest</b></div>`;
+        list.innerHTML = `<div style="text-align:center; padding:40px; color:#666; border: 2px dashed #333; border-radius: 12px; margin-top:20px;">No fests found.</div>`;
         return;
     }
 
@@ -109,6 +163,7 @@ function renderCreateFestPage() {
 }
 
 function addNewGlobalUser() {
+    if(!appState.adminPassword) return alert("Admin access required.");
     const nameInput = document.getElementById('newFriendName');
     const name = nameInput.value.trim();
     if (!name) return alert("Enter a name");
@@ -118,10 +173,14 @@ function addNewGlobalUser() {
     nameInput.value = "";
     renderCreateFestPage();
 
-    fetch(GOOGLE_SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ action: "createUser", id: newUser.id, name: newUser.name }) });
+    fetch(GOOGLE_SCRIPT_URL, { 
+        method: "POST", mode: "no-cors", 
+        body: JSON.stringify({ action: "createUser", id: newUser.id, name: newUser.name, password: appState.adminPassword }) 
+    });
 }
 
 function saveFestSetup() {
+    if(!appState.adminPassword) return alert("Admin access required.");
     const name = document.getElementById('festName').value;
     const start = document.getElementById('festStartDate').value;
     const end = document.getElementById('festEndDate').value;
@@ -131,9 +190,11 @@ function saveFestSetup() {
 
     const fest = { id: Date.now().toString(), name, startDate: start, endDate: end || start, participants };
     appState.fests.push(fest);
-    localStorage.setItem('festData_fests', JSON.stringify(appState.fests));
-
-    fetch(GOOGLE_SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ action: "createFest", ...fest }) });
+    
+    fetch(GOOGLE_SCRIPT_URL, { 
+        method: "POST", mode: "no-cors", 
+        body: JSON.stringify({ action: "createFest", ...fest, password: appState.adminPassword }) 
+    });
     
     document.getElementById('festName').value = "";
     openFestDetails(fest);
@@ -149,14 +210,26 @@ function openFestDetails(fest) {
     document.getElementById('view-fest-list').classList.remove('hidden');
     document.getElementById('view-add-expense').classList.add('hidden');
 
+    const addBtn = document.getElementById('add-expense-btn');
+    if(appState.adminPassword) addBtn.classList.remove('hidden');
+    else addBtn.classList.add('hidden');
+
     const tabsContainer = document.getElementById('fest-date-tabs');
     tabsContainer.innerHTML = "";
-    let curr = new Date(fest.startDate);
-    let last = new Date(fest.endDate);
+    
+    // FIX 2: Create dates using YYYY-MM-DD components to avoid UTC shift
+    const startParts = fest.startDate.split('-');
+    const endParts = fest.endDate.split('-');
+    
+    // Note: Month is 0-indexed in JS Date
+    let curr = new Date(startParts[0], startParts[1]-1, startParts[2]);
+    let last = new Date(endParts[0], endParts[1]-1, endParts[2]);
     let firstDateStr = fest.startDate;
 
     while (curr <= last) {
-        let dateStr = curr.toISOString().split('T')[0];
+        // Use local components for formatting
+        let dateStr = getLocalISODate(curr);
+        
         let tab = document.createElement('div');
         tab.className = `date-tab ${dateStr === firstDateStr ? 'active' : ''}`;
         tab.innerText = dateStr.slice(5); 
@@ -176,9 +249,7 @@ function renderExpenseList(dateStr) {
     const listContainer = document.getElementById('expense-list-container');
     listContainer.innerHTML = "";
 
-    const dailyTxns = appState.transactions.filter(t => 
-        t.eventId === appState.currentFest.id && t.date === dateStr
-    );
+    const dailyTxns = appState.transactions.filter(t => t.eventId === appState.currentFest.id && t.date === dateStr);
 
     if (dailyTxns.length === 0) {
         listContainer.innerHTML = `<div style="text-align:center; padding:30px; color:#666;">No expenses for this date.</div>`;
@@ -194,13 +265,9 @@ function renderExpenseList(dateStr) {
         item.style.margin = "10px 15px"; 
         item.style.position = "relative";
         
-        item.innerHTML = `
-            <div class="flex justify-between" style="padding-right: 60px;">
-                <span style="font-weight:bold; font-size:1.1rem;">${t.title}</span>
-                <span style="color:var(--secondary); font-weight:bold;">₹${t.amount}</span>
-            </div>
-            <div style="font-size:0.85rem; color:#aaa; margin-top:5px;">Paid by: ${payerText}</div>
-            
+        let actionsHtml = "";
+        if (appState.adminPassword) {
+            actionsHtml = `
             <div style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); display:flex; gap:15px;">
                 <div onclick="editTransaction('${t.id}')" style="cursor: pointer; color: var(--primary);">
                     <i class="fas fa-edit"></i>
@@ -208,16 +275,42 @@ function renderExpenseList(dateStr) {
                 <div onclick="deleteTransaction('${t.id}')" style="cursor: pointer; color: var(--error);">
                     <i class="fas fa-trash"></i>
                 </div>
+            </div>`;
+        }
+
+        item.innerHTML = `
+            <div class="flex justify-between" style="padding-right: ${appState.adminPassword ? '60px' : '0'};">
+                <span style="font-weight:bold; font-size:1.1rem;">${t.title}</span>
+                <span style="color:var(--secondary); font-weight:bold;">₹${t.amount}</span>
             </div>
+            <div style="font-size:0.85rem; color:#aaa; margin-top:5px;">Paid by: ${payerText}</div>
+            ${actionsHtml}
         `;
         listContainer.appendChild(item);
     });
 }
+
 // ==========================================
-// ADD / EDIT FORM LOGIC
+// ADD / EDIT / DELETE LOGIC
 // ==========================================
 
+function deleteTransaction(txnId) {
+    if(!appState.adminPassword) return;
+    if(!confirm("Delete expense?")) return;
+
+    appState.transactions = appState.transactions.filter(t => t.id !== txnId);
+    
+    const activeTab = document.querySelector('.date-tab.active');
+    renderExpenseList(activeTab ? activeTab.dataset.date : appState.currentFest.startDate);
+
+    fetch(GOOGLE_SCRIPT_URL, { 
+        method: "POST", mode: "no-cors", 
+        body: JSON.stringify({ action: "deleteExpense", id: txnId, password: appState.adminPassword }) 
+    });
+}
+
 function showAddExpenseForm() {
+    if(!appState.adminPassword) return;
     document.getElementById('view-fest-list').classList.add('hidden');
     document.getElementById('view-add-expense').classList.remove('hidden');
     document.getElementById('expense-form-title').innerText = "New Expense";
@@ -233,6 +326,7 @@ function hideAddExpenseForm() {
 }
 
 function editTransaction(txnId) {
+    if(!appState.adminPassword) return;
     const txn = appState.transactions.find(t => t.id === txnId);
     if (!txn) return;
 
@@ -259,7 +353,6 @@ function editTransaction(txnId) {
     }
 
     const isEquallySplit = Object.values(txn.split).every(val => Math.abs(val - (txn.amount / Object.keys(txn.split).length)) < 0.1);
-    
     document.getElementById('splitEquallyCheck').checked = isEquallySplit;
     toggleSplitMode();
 
@@ -297,6 +390,7 @@ function toggleSplitMode() {
 }
 
 function submitTransaction() {
+    if(!appState.adminPassword) return alert("Admin access required.");
     const fest = appState.currentFest;
     const title = document.getElementById('expTitle').value;
     const total = parseFloat(document.getElementById('expAmount').value);
@@ -331,25 +425,22 @@ function submitTransaction() {
     }
 
     if (appState.editingTxnId) {
-        // UPDATE EXISTING
         const index = appState.transactions.findIndex(t => t.id === appState.editingTxnId);
         if (index !== -1) {
             appState.transactions[index] = { ...appState.transactions[index], title, amount: total, payers, split };
             
-            const payload = { action: "editExpense", id: appState.editingTxnId, festId: fest.id, date: appState.transactions[index].date, title, amount: total, payers, split };
+            const payload = { action: "editExpense", id: appState.editingTxnId, festId: fest.id, date: appState.transactions[index].date, title, amount: total, payers, split, password: appState.adminPassword };
             fetch(GOOGLE_SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
         }
     } else {
-        // CREATE NEW
         const id = Date.now().toString();
         const txn = { id, eventId: fest.id, date, title, amount: total, payers, split };
         appState.transactions.push(txn);
         
-        const payload = { action: "addExpense", id, festId: txn.eventId, date, title, amount: total, payers, split };
+        const payload = { action: "addExpense", id, festId: txn.eventId, date, title, amount: total, payers, split, password: appState.adminPassword };
         fetch(GOOGLE_SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
     }
 
-    localStorage.setItem('festData_txns', JSON.stringify(appState.transactions));
     hideAddExpenseForm();
     renderExpenseList(date);
 }
@@ -401,6 +492,7 @@ function renderCalendar() {
     appState.transactions.forEach(t => { dailyTotals[t.date] = (dailyTotals[t.date] || 0) + parseFloat(t.amount); });
 
     const today = new Date();
+    // FIX 3: Start loop in local time
     let loopDate = new Date(today.getFullYear(), today.getMonth() - 11, 1);
 
     for (let i = 0; i < 12; i++) {
@@ -420,8 +512,10 @@ function renderCalendar() {
         for(let j=0; j<firstDayOfWeek; j++) grid.innerHTML += `<div class="heatmap-box empty"></div>`;
 
         for(let day=1; day<=daysInMonth; day++) {
+            // FIX 4: Build date string manually for lookup
             const dateStr = `${year}-${String(monthIndex+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
             const amount = dailyTotals[dateStr] || 0;
+            
             let level = 'level-0';
             if (amount > 0) level = 'level-1';
             if (amount > 500) level = 'level-2';
@@ -445,7 +539,10 @@ function renderCalendar() {
 const tooltipEl = document.getElementById('heatmap-tooltip');
 function showTooltip(e, date, amount) {
     if(!tooltipEl) return;
-    const dateText = new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    // FIX 5: Tooltip also needs to parse date string as local parts
+    const parts = date.split('-');
+    const dateObj = new Date(parts[0], parts[1]-1, parts[2]);
+    const dateText = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     tooltipEl.innerHTML = `<strong>${dateText}</strong><br>₹${amount}`;
     tooltipEl.style.display = 'block';
     moveTooltip(e);
@@ -469,7 +566,6 @@ function closeSettlementModal() { document.getElementById('settlement-modal').cl
 
 function calculateSettlement(festId, outputElementId) {
     if (!festId) return;
-
     const festTxns = appState.transactions.filter(t => t.eventId === festId);
     const container = document.getElementById(outputElementId);
 
@@ -478,62 +574,31 @@ function calculateSettlement(festId, outputElementId) {
         return;
     }
 
-    // 1. Initialize logic
-    let bal = {};
-    let spent = {}; // Track total spending for display
-    let consumed = {}; // Track total consumption for display
-    
-    appState.currentFest.participants.forEach(m => {
-        bal[m] = 0;
-        spent[m] = 0;
-        consumed[m] = 0;
-    });
+    let bal = {}, spent = {}, consumed = {};
+    appState.currentFest.participants.forEach(m => { bal[m] = 0; spent[m]=0; consumed[m]=0; });
 
-    // 2. Process Transactions
     festTxns.forEach(tx => {
-        // Add to Payers
         for (const [person, amount] of Object.entries(tx.payers)) {
             let val = parseFloat(amount);
-            bal[person] += val;
-            spent[person] += val;
+            bal[person] += val; spent[person] += val;
         }
-        // Subtract from Consumers
         for (const [person, amount] of Object.entries(tx.split)) {
             let val = parseFloat(amount);
-            bal[person] -= val;
-            consumed[person] += val;
+            bal[person] -= val; consumed[person] += val;
         }
     });
 
-    // 3. Generate "The Proof" (Balance Sheet Table)
-    let breakdownHtml = `
-        <h4 style="color:#a0a0a0; margin-bottom:10px; font-size:0.9rem; text-transform:uppercase;">Step 1: Net Balance</h4>
-        <table style="width:100%; font-size:0.85rem; color:#ccc; margin-bottom:20px; border-collapse: collapse;">
-            <tr style="border-bottom:1px solid #444; text-align:left;">
-                <th style="padding:5px;">Name</th>
-                <th style="padding:5px;">Paid</th>
-                <th style="padding:5px;">Ate</th>
-                <th style="padding:5px;">Net</th>
-            </tr>
-    `;
+    let html = `<h4 style="color:#a0a0a0; margin-bottom:10px; font-size:0.9rem; text-transform:uppercase;">Net Balance</h4>
+    <table style="width:100%; font-size:0.85rem; color:#ccc; margin-bottom:20px; border-collapse: collapse;">
+    <tr style="border-bottom:1px solid #444; text-align:left;"><th style="padding:5px;">Name</th><th style="padding:5px;">Paid</th><th style="padding:5px;">Ate</th><th style="padding:5px;">Net</th></tr>`;
 
     for (let p in bal) {
         bal[p] = Math.round(bal[p] * 100) / 100;
         let color = bal[p] >= 0 ? "#03dac6" : "#cf6679";
-        let sign = bal[p] > 0 ? "+" : ""; // Add plus sign for positive
-        
-        breakdownHtml += `
-            <tr style="border-bottom:1px solid #333;">
-                <td style="padding:5px;">${p}</td>
-                <td style="padding:5px; color:#aaa;">${Math.round(spent[p])}</td>
-                <td style="padding:5px; color:#aaa;">${Math.round(consumed[p])}</td>
-                <td style="padding:5px; color:${color}; font-weight:bold;">${sign}${bal[p]}</td>
-            </tr>
-        `;
+        html += `<tr style="border-bottom:1px solid #333;"><td style="padding:5px;">${p}</td><td style="padding:5px; color:#aaa;">${Math.round(spent[p])}</td><td style="padding:5px; color:#aaa;">${Math.round(consumed[p])}</td><td style="padding:5px; color:${color}; font-weight:bold;">${bal[p]>0?'+':''}${bal[p]}</td></tr>`;
     }
-    breakdownHtml += `</table>`;
+    html += `</table>`;
 
-    // 4. Calculate Payments (The Action)
     let debtors = [], creditors = [];
     for (let p in bal) {
         if (bal[p] < -0.01) debtors.push({ p, amt: -bal[p] });
@@ -543,60 +608,22 @@ function calculateSettlement(festId, outputElementId) {
     debtors.sort((a, b) => b.amt - a.amt);
     creditors.sort((a, b) => b.amt - a.amt);
 
-    let paymentHtml = `<h4 style="color:#a0a0a0; margin-bottom:10px; font-size:0.9rem; text-transform:uppercase;">Step 2: Payments</h4>`;
+    let paymentHtml = `<h4 style="color:#a0a0a0; margin-bottom:10px; font-size:0.9rem; text-transform:uppercase;">Payments</h4>`;
     let i = 0, j = 0;
-    let hasPayments = false;
-
+    
     while (i < debtors.length && j < creditors.length) {
         let x = Math.min(debtors[i].amt, creditors[j].amt);
         x = Math.round(x * 100) / 100;
 
         if (x > 0) {
-            hasPayments = true;
-            paymentHtml += `<div style="padding:10px; border-bottom:1px solid #333; display:flex; justify-content:space-between; align-items:center;">
-                <span><b style="color:#cf6679">${debtors[i].p}</b> pays <b style="color:#03dac6">${creditors[j].p}</b></span>
-                <span style="color:#fff; font-weight:bold;">₹${x}</span>
-            </div>`;
+            paymentHtml += `<div style="padding:10px; border-bottom:1px solid #333; display:flex; justify-content:space-between; align-items:center;"><span><b style="color:#cf6679">${debtors[i].p}</b> pays <b style="color:#03dac6">${creditors[j].p}</b></span><span style="color:#fff; font-weight:bold;">₹${x}</span></div>`;
         }
-
-        debtors[i].amt -= x;
-        creditors[j].amt -= x;
-
+        debtors[i].amt -= x; creditors[j].amt -= x;
         if (debtors[i].amt < 0.01) i++;
         if (creditors[j].amt < 0.01) j++;
     }
 
-    if (!hasPayments) paymentHtml += "<div style='text-align:center; padding:10px; color:#03dac6;'>Everyone is settled! 🎉</div>";
-    
-    // Combine both sections
-    container.innerHTML = breakdownHtml + paymentHtml;
-}
-
-function deleteTransaction(txnId) {
-    if(!confirm("Are you sure you want to delete this expense?")) return;
-
-    // 1. Remove from Local State
-    appState.transactions = appState.transactions.filter(t => t.id !== txnId);
-
-    // 2. Save & Refresh UI
-    localStorage.setItem('festData_txns', JSON.stringify(appState.transactions));
-    
-    // Get current date to refresh the correct list view
-    const activeTab = document.querySelector('.date-tab.active');
-    const dateStr = activeTab ? activeTab.dataset.date : appState.currentFest.startDate;
-    renderExpenseList(dateStr);
-
-    // 3. Send Delete Command to Backend
-    const payload = {
-        action: "deleteExpense",
-        id: txnId
-    };
-
-    fetch(GOOGLE_SCRIPT_URL, { 
-        method: "POST", 
-        mode: "no-cors", 
-        body: JSON.stringify(payload) 
-    });
+    container.innerHTML = html + paymentHtml;
 }
 
 // START
