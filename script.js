@@ -469,6 +469,7 @@ function closeSettlementModal() { document.getElementById('settlement-modal').cl
 
 function calculateSettlement(festId, outputElementId) {
     if (!festId) return;
+
     const festTxns = appState.transactions.filter(t => t.eventId === festId);
     const container = document.getElementById(outputElementId);
 
@@ -477,47 +478,98 @@ function calculateSettlement(festId, outputElementId) {
         return;
     }
 
-    let balances = {};
-    appState.currentFest.participants.forEach(p => balances[p] = 0);
-
-    festTxns.forEach(t => {
-        for (const [person, amount] of Object.entries(t.payers)) balances[person] = (balances[person] || 0) + parseFloat(amount);
-        for (const [person, amount] of Object.entries(t.split)) balances[person] = (balances[person] || 0) - parseFloat(amount);
+    // 1. Initialize logic
+    let bal = {};
+    let spent = {}; // Track total spending for display
+    let consumed = {}; // Track total consumption for display
+    
+    appState.currentFest.participants.forEach(m => {
+        bal[m] = 0;
+        spent[m] = 0;
+        consumed[m] = 0;
     });
 
+    // 2. Process Transactions
+    festTxns.forEach(tx => {
+        // Add to Payers
+        for (const [person, amount] of Object.entries(tx.payers)) {
+            let val = parseFloat(amount);
+            bal[person] += val;
+            spent[person] += val;
+        }
+        // Subtract from Consumers
+        for (const [person, amount] of Object.entries(tx.split)) {
+            let val = parseFloat(amount);
+            bal[person] -= val;
+            consumed[person] += val;
+        }
+    });
+
+    // 3. Generate "The Proof" (Balance Sheet Table)
+    let breakdownHtml = `
+        <h4 style="color:#a0a0a0; margin-bottom:10px; font-size:0.9rem; text-transform:uppercase;">Step 1: Net Balance</h4>
+        <table style="width:100%; font-size:0.85rem; color:#ccc; margin-bottom:20px; border-collapse: collapse;">
+            <tr style="border-bottom:1px solid #444; text-align:left;">
+                <th style="padding:5px;">Name</th>
+                <th style="padding:5px;">Paid</th>
+                <th style="padding:5px;">Ate</th>
+                <th style="padding:5px;">Net</th>
+            </tr>
+    `;
+
+    for (let p in bal) {
+        bal[p] = Math.round(bal[p] * 100) / 100;
+        let color = bal[p] >= 0 ? "#03dac6" : "#cf6679";
+        let sign = bal[p] > 0 ? "+" : ""; // Add plus sign for positive
+        
+        breakdownHtml += `
+            <tr style="border-bottom:1px solid #333;">
+                <td style="padding:5px;">${p}</td>
+                <td style="padding:5px; color:#aaa;">${Math.round(spent[p])}</td>
+                <td style="padding:5px; color:#aaa;">${Math.round(consumed[p])}</td>
+                <td style="padding:5px; color:${color}; font-weight:bold;">${sign}${bal[p]}</td>
+            </tr>
+        `;
+    }
+    breakdownHtml += `</table>`;
+
+    // 4. Calculate Payments (The Action)
     let debtors = [], creditors = [];
-    for (const [person, amount] of Object.entries(balances)) {
-        const val = Math.round(amount * 100) / 100;
-        if (val < -0.01) debtors.push({ name: person, amount: val });
-        if (val > 0.01) creditors.push({ name: person, amount: val });
+    for (let p in bal) {
+        if (bal[p] < -0.01) debtors.push({ p, amt: -bal[p] });
+        if (bal[p] > 0.01) creditors.push({ p, amt: bal[p] });
     }
 
-    let html = "";
-    while (debtors.length > 0 && creditors.length > 0) {
-        debtors.sort((a, b) => a.amount - b.amount);
-        creditors.sort((a, b) => b.amount - a.amount);
+    debtors.sort((a, b) => b.amt - a.amt);
+    creditors.sort((a, b) => b.amt - a.amt);
 
-        let debtor = debtors[0];
-        let creditor = creditors[0];
-        let amount = Math.min(Math.abs(debtor.amount), creditor.amount);
-        amount = Math.round(amount * 100) / 100;
+    let paymentHtml = `<h4 style="color:#a0a0a0; margin-bottom:10px; font-size:0.9rem; text-transform:uppercase;">Step 2: Payments</h4>`;
+    let i = 0, j = 0;
+    let hasPayments = false;
 
-        if (amount > 0) {
-            html += `<div style="padding:10px; border-bottom:1px solid #333; display:flex; justify-content:space-between; align-items:center;">
-                <span><b style="color:#cf6679">${debtor.name}</b> pays <b style="color:#03dac6">${creditor.name}</b></span>
-                <span style="color:#fff; font-weight:bold;">₹${amount}</span>
+    while (i < debtors.length && j < creditors.length) {
+        let x = Math.min(debtors[i].amt, creditors[j].amt);
+        x = Math.round(x * 100) / 100;
+
+        if (x > 0) {
+            hasPayments = true;
+            paymentHtml += `<div style="padding:10px; border-bottom:1px solid #333; display:flex; justify-content:space-between; align-items:center;">
+                <span><b style="color:#cf6679">${debtors[i].p}</b> pays <b style="color:#03dac6">${creditors[j].p}</b></span>
+                <span style="color:#fff; font-weight:bold;">₹${x}</span>
             </div>`;
         }
 
-        debtor.amount = Math.round((debtor.amount + amount) * 100) / 100;
-        creditor.amount = Math.round((creditor.amount - amount) * 100) / 100;
+        debtors[i].amt -= x;
+        creditors[j].amt -= x;
 
-        if (Math.abs(debtor.amount) < 0.01) debtors.shift();
-        if (creditor.amount < 0.01) creditors.shift();
+        if (debtors[i].amt < 0.01) i++;
+        if (creditors[j].amt < 0.01) j++;
     }
 
-    if (html === "") html = "<div style='text-align:center; padding:20px; color:#03dac6;'>All settled up! 🎉</div>";
-    container.innerHTML = html;
+    if (!hasPayments) paymentHtml += "<div style='text-align:center; padding:10px; color:#03dac6;'>Everyone is settled! 🎉</div>";
+    
+    // Combine both sections
+    container.innerHTML = breakdownHtml + paymentHtml;
 }
 
 function deleteTransaction(txnId) {
