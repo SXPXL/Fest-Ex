@@ -3,24 +3,23 @@
 // ==========================================
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz0SBabKwcnixEgEO93MnxA9zw6oRf6ckcBWJfTJ13Ha1JnyX_OIpUpDoXpPQO1Nq_yDA/exec";
 
-
 // ==========================================
 // STATE MANAGEMENT
 // ==========================================
 let appState = {
     currentFest: null,
     editingTxnId: null,
-    fests: [], 
-    transactions: [], 
+    fests: [],
+    transactions: [],
     users: [],
     calCursorDate: new Date(),
-    adminPassword: localStorage.getItem('fest_admin_pass') || null 
+    adminPassword: localStorage.getItem('fest_admin_pass') || null
 };
 
 // HELPER: Fixes the "Day Back" bug by forcing Local Time conversion
 function getLocalISODate(dateObj) {
-    // Takes a date object and returns "YYYY-MM-DD" in local timezone
-    const offset = dateObj.getTimezoneOffset() * 60000; // Offset in milliseconds
+    if (!dateObj || isNaN(dateObj.getTime())) return "";
+    const offset = dateObj.getTimezoneOffset() * 60000;
     const localDate = new Date(dateObj.getTime() - offset);
     return localDate.toISOString().split('T')[0];
 }
@@ -30,25 +29,26 @@ function getLocalISODate(dateObj) {
 // ==========================================
 async function init() {
     const list = document.getElementById('active-fests-list');
-    if(list) list.innerHTML = "Loading from cloud...";
-    
+    if (list) list.innerHTML = "Loading from cloud...";
+
     updateAdminUI();
 
     try {
         const response = await fetch(GOOGLE_SCRIPT_URL);
         const data = await response.json();
-        
-        // FIX 1: Use getLocalISODate instead of pure toISOString
-        appState.fests = data.fests.map(f => ({
+
+        appState.fests = (data.fests || []).map(f => ({
             ...f,
+            id: String(f.id),
             startDate: getLocalISODate(new Date(f.startDate)),
             endDate: getLocalISODate(new Date(f.endDate))
         }));
-        
-        appState.transactions = data.transactions.map(t => ({
-             ...t,
-             id: String(t.id),
-             date: getLocalISODate(new Date(t.date))
+
+        appState.transactions = (data.transactions || []).map(t => ({
+            ...t,
+            id: String(t.id),
+            eventId: String(t.eventId),
+            date: getLocalISODate(new Date(t.date))
         }));
 
         appState.users = data.users || [];
@@ -56,7 +56,7 @@ async function init() {
         showPage('home');
 
     } catch (error) {
-        alert("Failed to load data. Check internet.");
+        alert("Failed to load data. Check internet connection.");
         console.error(error);
     }
 }
@@ -66,30 +66,34 @@ async function init() {
 // ==========================================
 function toggleAdminLogin() {
     if (appState.adminPassword) {
-        if(confirm("Logout of Admin Mode?")) {
+        if (confirm("Logout of Admin Mode?")) {
             appState.adminPassword = null;
             localStorage.removeItem('fest_admin_pass');
-            location.reload(); 
+            location.reload();
         }
     } else {
         const pass = prompt("Enter Admin Password to Edit:");
         if (pass) {
-            appState.adminPassword = pass;
-            localStorage.setItem('fest_admin_pass', pass);
+            const cleanPass = pass.trim();
+            appState.adminPassword = cleanPass;
+            localStorage.setItem('fest_admin_pass', cleanPass);
             updateAdminUI();
             if (appState.currentFest) {
-                renderExpenseList(document.querySelector('.date-tab.active')?.dataset.date || appState.currentFest.startDate);
-                const btn = document.getElementById('add-expense-btn'); // Safe check
-                if(btn) btn.classList.remove('hidden');
+                const activeTab = document.querySelector('.date-tab.active');
+                renderExpenseList(activeTab ? activeTab.dataset.date : appState.currentFest.startDate);
+                const btn = document.getElementById('add-expense-btn');
+                if (btn) btn.classList.remove('hidden');
+                const delFestBtn = document.getElementById('delete-fest-header-btn');
+                if (delFestBtn) delFestBtn.classList.remove('hidden');
             }
-            if(!document.getElementById('page-home').classList.contains('hidden')) renderHome();
+            if (!document.getElementById('page-home').classList.contains('hidden')) renderHome();
         }
     }
 }
 
 function updateAdminUI() {
     const btn = document.getElementById('admin-btn');
-    if(!btn) return;
+    if (!btn) return;
     if (appState.adminPassword) {
         btn.innerHTML = '<i class="fas fa-unlock"></i> Admin';
         btn.style.color = "#03dac6";
@@ -117,7 +121,7 @@ function showPage(pageId) {
     document.querySelector('.nav-overlay').style.display = 'none';
 
     if (pageId === 'home') renderHome();
-    if (pageId === 'create-event') renderCreateFestPage(); 
+    if (pageId === 'create-event') renderCreateFestPage();
     if (pageId === 'analytics') renderAnalytics();
 }
 
@@ -126,10 +130,10 @@ function showPage(pageId) {
 // ==========================================
 function renderHome() {
     const list = document.getElementById('active-fests-list');
-    list.innerHTML = ""; 
+    list.innerHTML = "";
 
     const addCard = document.getElementById('add-fest-card');
-    if(appState.adminPassword) addCard.classList.remove('hidden');
+    if (appState.adminPassword) addCard.classList.remove('hidden');
     else addCard.classList.add('hidden');
 
     if (appState.fests.length === 0) {
@@ -140,9 +144,57 @@ function renderHome() {
     appState.fests.forEach(fest => {
         const card = document.createElement('div');
         card.className = 'card';
-        card.innerHTML = `<div class="flex justify-between"><h3 style="margin:0; color:#bb86fc;">${fest.name}</h3><span style="font-size:0.8rem; background:#333; padding:2px 6px; border-radius:4px;">${fest.startDate}</span></div><div style="margin-top:5px; color:#aaa; font-size:0.9rem;">${fest.participants.length} Participants</div>`;
+        card.style.position = 'relative';
+        card.style.cursor = 'pointer';
+
+        let deleteBtnHtml = '';
+        if (appState.adminPassword) {
+            deleteBtnHtml = `
+            <div onclick="event.stopPropagation(); deleteFest('${fest.id}')" title="Delete Fest" style="cursor: pointer; color: var(--error); padding: 5px 10px; font-size: 1.1rem; margin-left: 10px;">
+                <i class="fas fa-trash"></i>
+            </div>`;
+        }
+
+        card.innerHTML = `
+            <div class="flex justify-between">
+                <div style="flex:1;">
+                    <div class="flex justify-between" style="margin-bottom:5px;">
+                        <h3 style="margin:0; color:#bb86fc;">${fest.name}</h3>
+                        <span style="font-size:0.8rem; background:#333; padding:2px 6px; border-radius:4px;">${fest.startDate}</span>
+                    </div>
+                    <div style="color:#aaa; font-size:0.9rem;">${fest.participants ? fest.participants.length : 0} Participants</div>
+                </div>
+                ${deleteBtnHtml}
+            </div>
+        `;
         card.onclick = () => openFestDetails(fest);
         list.appendChild(card);
+    });
+}
+
+// ==========================================
+// DELETE FEST
+// ==========================================
+function deleteFest(festId) {
+    if (!appState.adminPassword) return alert("Admin access required.");
+    const fest = appState.fests.find(f => String(f.id) === String(festId));
+    if (!fest) return;
+
+    if (!confirm(`Are you sure you want to delete "${fest.name}" and all its expenses?`)) return;
+
+    appState.fests = appState.fests.filter(f => String(f.id) !== String(festId));
+    appState.transactions = appState.transactions.filter(t => String(t.eventId) !== String(festId));
+
+    if (appState.currentFest && String(appState.currentFest.id) === String(festId)) {
+        appState.currentFest = null;
+    }
+
+    showPage('home');
+
+    fetch(GOOGLE_SCRIPT_URL, {
+        method: "POST",
+        mode: "no-cors",
+        body: JSON.stringify({ action: "deleteFest", id: festId, password: appState.adminPassword })
     });
 }
 
@@ -151,7 +203,7 @@ function renderHome() {
 // ==========================================
 function renderCreateFestPage() {
     const container = document.getElementById('user-selection-list');
-    if(!container) return; 
+    if (!container) return;
     container.innerHTML = "";
     if (appState.users.length === 0) {
         container.innerHTML = "<div style='color:#666; font-size:0.9rem; padding:10px;'>No friends added yet.</div>";
@@ -163,7 +215,7 @@ function renderCreateFestPage() {
 }
 
 function addNewGlobalUser() {
-    if(!appState.adminPassword) return alert("Admin access required.");
+    if (!appState.adminPassword) return alert("Admin access required.");
     const nameInput = document.getElementById('newFriendName');
     const name = nameInput.value.trim();
     if (!name) return alert("Enter a name");
@@ -173,30 +225,32 @@ function addNewGlobalUser() {
     nameInput.value = "";
     renderCreateFestPage();
 
-    fetch(GOOGLE_SCRIPT_URL, { 
-        method: "POST", mode: "no-cors", 
-        body: JSON.stringify({ action: "createUser", id: newUser.id, name: newUser.name, password: appState.adminPassword }) 
+    fetch(GOOGLE_SCRIPT_URL, {
+        method: "POST", mode: "no-cors",
+        body: JSON.stringify({ action: "createUser", id: newUser.id, name: newUser.name, password: appState.adminPassword })
     });
 }
 
 function saveFestSetup() {
-    if(!appState.adminPassword) return alert("Admin access required.");
-    const name = document.getElementById('festName').value;
+    if (!appState.adminPassword) return alert("Admin access required.");
+    const name = document.getElementById('festName').value.trim();
     const start = document.getElementById('festStartDate').value;
     const end = document.getElementById('festEndDate').value;
     const participants = Array.from(document.querySelectorAll('.fest-user-check:checked')).map(cb => cb.value);
 
-    if(!name || !start || participants.length === 0) return alert("Fill details & select friends");
+    if (!name || !start || participants.length === 0) return alert("Fill details & select friends");
 
     const fest = { id: Date.now().toString(), name, startDate: start, endDate: end || start, participants };
     appState.fests.push(fest);
-    
-    fetch(GOOGLE_SCRIPT_URL, { 
-        method: "POST", mode: "no-cors", 
-        body: JSON.stringify({ action: "createFest", ...fest, password: appState.adminPassword }) 
+
+    fetch(GOOGLE_SCRIPT_URL, {
+        method: "POST", mode: "no-cors",
+        body: JSON.stringify({ action: "createFest", ...fest, password: appState.adminPassword })
     });
-    
+
     document.getElementById('festName').value = "";
+    document.getElementById('festStartDate').value = "";
+    document.getElementById('festEndDate').value = "";
     openFestDetails(fest);
 }
 
@@ -205,34 +259,37 @@ function saveFestSetup() {
 // ==========================================
 function openFestDetails(fest) {
     appState.currentFest = fest;
-    showPage('fest-details'); 
+    showPage('fest-details');
     document.getElementById('fest-details-title').innerText = fest.name;
     document.getElementById('view-fest-list').classList.remove('hidden');
     document.getElementById('view-add-expense').classList.add('hidden');
 
     const addBtn = document.getElementById('add-expense-btn');
-    if(appState.adminPassword) addBtn.classList.remove('hidden');
+    if (appState.adminPassword) addBtn.classList.remove('hidden');
     else addBtn.classList.add('hidden');
+
+    const delFestBtn = document.getElementById('delete-fest-header-btn');
+    if (delFestBtn) {
+        if (appState.adminPassword) delFestBtn.classList.remove('hidden');
+        else delFestBtn.classList.add('hidden');
+    }
 
     const tabsContainer = document.getElementById('fest-date-tabs');
     tabsContainer.innerHTML = "";
-    
-    // FIX 2: Create dates using YYYY-MM-DD components to avoid UTC shift
-    const startParts = fest.startDate.split('-');
-    const endParts = fest.endDate.split('-');
-    
-    // Note: Month is 0-indexed in JS Date
-    let curr = new Date(startParts[0], startParts[1]-1, startParts[2]);
-    let last = new Date(endParts[0], endParts[1]-1, endParts[2]);
+
+    const startParts = (fest.startDate || "").split('-');
+    const endParts = (fest.endDate || fest.startDate || "").split('-');
+
+    let curr = new Date(startParts[0], startParts[1] - 1, startParts[2]);
+    let last = new Date(endParts[0], endParts[1] - 1, endParts[2]);
     let firstDateStr = fest.startDate;
 
     while (curr <= last) {
-        // Use local components for formatting
         let dateStr = getLocalISODate(curr);
-        
+
         let tab = document.createElement('div');
         tab.className = `date-tab ${dateStr === firstDateStr ? 'active' : ''}`;
-        tab.innerText = dateStr.slice(5); 
+        tab.innerText = dateStr.slice(5);
         tab.dataset.date = dateStr;
         tab.onclick = (e) => {
             document.querySelectorAll('.date-tab').forEach(t => t.classList.remove('active'));
@@ -249,7 +306,7 @@ function renderExpenseList(dateStr) {
     const listContainer = document.getElementById('expense-list-container');
     listContainer.innerHTML = "";
 
-    const dailyTxns = appState.transactions.filter(t => t.eventId === appState.currentFest.id && t.date === dateStr);
+    const dailyTxns = appState.transactions.filter(t => String(t.eventId) === String(appState.currentFest.id) && t.date === dateStr);
 
     if (dailyTxns.length === 0) {
         listContainer.innerHTML = `<div style="text-align:center; padding:30px; color:#666;">No expenses for this date.</div>`;
@@ -262,9 +319,9 @@ function renderExpenseList(dateStr) {
 
         const item = document.createElement('div');
         item.className = 'card';
-        item.style.margin = "10px 15px"; 
+        item.style.margin = "10px 15px";
         item.style.position = "relative";
-        
+
         let actionsHtml = "";
         if (appState.adminPassword) {
             actionsHtml = `
@@ -291,33 +348,35 @@ function renderExpenseList(dateStr) {
 }
 
 // ==========================================
-// ADD / EDIT / DELETE LOGIC
+// ADD / EDIT / DELETE EXPENSE LOGIC
 // ==========================================
 
 function deleteTransaction(txnId) {
-    if(!appState.adminPassword) return;
-    if(!confirm("Delete expense?")) return;
+    if (!appState.adminPassword) return;
+    if (!confirm("Delete expense?")) return;
 
-    appState.transactions = appState.transactions.filter(t => t.id !== txnId);
-    
+    appState.transactions = appState.transactions.filter(t => String(t.id) !== String(txnId));
+
     const activeTab = document.querySelector('.date-tab.active');
     renderExpenseList(activeTab ? activeTab.dataset.date : appState.currentFest.startDate);
 
-    fetch(GOOGLE_SCRIPT_URL, { 
-        method: "POST", mode: "no-cors", 
-        body: JSON.stringify({ action: "deleteExpense", id: txnId, password: appState.adminPassword }) 
+    fetch(GOOGLE_SCRIPT_URL, {
+        method: "POST", mode: "no-cors",
+        body: JSON.stringify({ action: "deleteExpense", id: txnId, password: appState.adminPassword })
     });
 }
 
 function showAddExpenseForm() {
-    if(!appState.adminPassword) return;
+    if (!appState.adminPassword) return;
     document.getElementById('view-fest-list').classList.add('hidden');
     document.getElementById('view-add-expense').classList.remove('hidden');
     document.getElementById('expense-form-title').innerText = "New Expense";
     appState.editingTxnId = null;
     document.getElementById('expTitle').value = "";
     document.getElementById('expAmount').value = "";
-    renderPayerUI(); 
+    document.getElementById('splitEquallyCheck').checked = true;
+    toggleSplitMode();
+    renderPayerUI();
 }
 
 function hideAddExpenseForm() {
@@ -325,9 +384,168 @@ function hideAddExpenseForm() {
     document.getElementById('view-fest-list').classList.remove('hidden');
 }
 
+function renderPayerUI() {
+    const participants = (appState.currentFest && appState.currentFest.participants) ? appState.currentFest.participants : [];
+    const pContainer = document.getElementById('payer-selection-area');
+    const sContainer = document.getElementById('split-selection-area');
+    pContainer.innerHTML = "";
+    sContainer.innerHTML = "";
+
+    participants.forEach(p => {
+        // Payer Row
+        pContainer.innerHTML += `
+            <div class="user-select-row">
+                <div class="flex">
+                    <input type="checkbox" class="payer-check" value="${p}" onchange="handlePayerChange()" style="width:20px; margin-right:10px;">
+                    <span>${p}</span>
+                </div>
+                <input type="number" step="any" class="amount-manual payer-input hidden" id="pay-amt-${p}" placeholder="0">
+            </div>`;
+
+        // Split Row with Checkbox and Input
+        sContainer.innerHTML += `
+            <div class="user-select-row">
+                <div class="flex">
+                    <input type="checkbox" class="split-user-check" value="${p}" checked onchange="updateSplitCalculations()" style="width:20px; margin-right:10px;">
+                    <span>${p}</span>
+                </div>
+                <input type="number" step="any" class="amount-manual split-input" id="split-amt-${p}" placeholder="Auto" oninput="updateSplitCalculations()" onkeydown="handleSplitKeydown(event)">
+            </div>`;
+    });
+
+    updateSplitCalculations();
+}
+
+function handlePayerChange() {
+    const checked = document.querySelectorAll('.payer-check:checked');
+    document.querySelectorAll('.payer-input').forEach(i => i.classList.add('hidden'));
+    if (checked.length > 1) {
+        checked.forEach(chk => {
+            const inp = document.getElementById(`pay-amt-${chk.value}`);
+            if (inp) inp.classList.remove('hidden');
+        });
+    }
+}
+
+function toggleSplitMode() {
+    const isEqual = document.getElementById('splitEquallyCheck').checked;
+    const area = document.getElementById('split-selection-area');
+    const helper = document.getElementById('split-helper-container');
+    if (isEqual) {
+        area.classList.add('hidden');
+        if (helper) helper.classList.add('hidden');
+    } else {
+        area.classList.remove('hidden');
+        if (helper) helper.classList.remove('hidden');
+        updateSplitCalculations();
+    }
+}
+
+function updateSplitCalculations() {
+    const total = parseFloat(document.getElementById('expAmount').value) || 0;
+    const checkedSplitters = Array.from(document.querySelectorAll('.split-user-check:checked'));
+
+    // Enable or disable inputs based on checkbox selection
+    document.querySelectorAll('.split-user-check').forEach(chk => {
+        const inp = document.getElementById(`split-amt-${chk.value}`);
+        if (inp) {
+            inp.disabled = !chk.checked;
+            if (!chk.checked) {
+                inp.value = "";
+                inp.placeholder = "0";
+            }
+        }
+    });
+
+    let manualSum = 0;
+    const unassigned = [];
+
+    checkedSplitters.forEach(chk => {
+        const inp = document.getElementById(`split-amt-${chk.value}`);
+        const val = parseFloat(inp.value);
+        if (!isNaN(val) && inp.value.trim() !== "") {
+            manualSum += val;
+        } else {
+            unassigned.push(inp);
+        }
+    });
+
+    const remaining = total - manualSum;
+    const splitPerPerson = (unassigned.length > 0 && remaining > 0) ? (remaining / unassigned.length) : 0;
+
+    unassigned.forEach(inp => {
+        inp.placeholder = splitPerPerson > 0 ? `₹${splitPerPerson % 1 === 0 ? splitPerPerson : splitPerPerson.toFixed(2)}` : "0";
+    });
+
+    const infoEl = document.getElementById('split-helper-info');
+    if (infoEl) {
+        if (checkedSplitters.length === 0) {
+            infoEl.innerText = "Select participants to split with.";
+            infoEl.style.color = "var(--error)";
+        } else if (unassigned.length > 0) {
+            const formatted = splitPerPerson % 1 === 0 ? splitPerPerson : splitPerPerson.toFixed(2);
+            infoEl.innerText = `Remaining: ₹${Math.max(0, remaining).toFixed(2)} (₹${formatted} each for ${unassigned.length})`;
+            infoEl.style.color = "var(--secondary)";
+        } else {
+            const diff = total - manualSum;
+            if (Math.abs(diff) < 0.01) {
+                infoEl.innerText = `Total matches: ₹${total}`;
+                infoEl.style.color = "#03dac6";
+            } else {
+                infoEl.innerText = `Diff: ₹${diff.toFixed(2)} (Assigned: ₹${manualSum.toFixed(2)} / Total: ₹${total})`;
+                infoEl.style.color = "var(--error)";
+            }
+        }
+    }
+}
+
+function autoFillRemainingSplit() {
+    const total = parseFloat(document.getElementById('expAmount').value) || 0;
+    const checkedSplitters = Array.from(document.querySelectorAll('.split-user-check:checked'));
+    if (checkedSplitters.length === 0) return alert("Select at least one participant to split with.");
+
+    let manualSum = 0;
+    const unassigned = [];
+
+    checkedSplitters.forEach(chk => {
+        const inp = document.getElementById(`split-amt-${chk.value}`);
+        const val = parseFloat(inp.value);
+        if (!isNaN(val) && inp.value.trim() !== "") {
+            manualSum += val;
+        } else {
+            unassigned.push(inp);
+        }
+    });
+
+    const remaining = total - manualSum;
+    if (unassigned.length === 0) {
+        const perPerson = Math.round((total / checkedSplitters.length) * 100) / 100;
+        checkedSplitters.forEach(chk => {
+            const inp = document.getElementById(`split-amt-${chk.value}`);
+            inp.value = perPerson;
+        });
+    } else {
+        if (remaining < 0) {
+            return alert("Assigned amounts already exceed total expense!");
+        }
+        const splitPerPerson = Math.round((remaining / unassigned.length) * 100) / 100;
+        unassigned.forEach(inp => {
+            inp.value = splitPerPerson;
+        });
+    }
+    updateSplitCalculations();
+}
+
+function handleSplitKeydown(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        autoFillRemainingSplit();
+    }
+}
+
 function editTransaction(txnId) {
-    if(!appState.adminPassword) return;
-    const txn = appState.transactions.find(t => t.id === txnId);
+    if (!appState.adminPassword) return;
+    const txn = appState.transactions.find(t => String(t.id) === String(txnId));
     if (!txn) return;
 
     appState.editingTxnId = txnId;
@@ -337,98 +555,114 @@ function editTransaction(txnId) {
     document.getElementById('expTitle').value = txn.title;
     document.getElementById('expAmount').value = txn.amount;
 
+    // Reset payers
     document.querySelectorAll('.payer-check').forEach(cb => cb.checked = false);
     document.querySelectorAll('.payer-input').forEach(inp => { inp.value = ""; inp.classList.add('hidden'); });
 
-    for (const [person, amount] of Object.entries(txn.payers)) {
+    for (const [person, amount] of Object.entries(txn.payers || {})) {
         const checkbox = document.querySelector(`.payer-check[value="${person}"]`);
         if (checkbox) {
             checkbox.checked = true;
             if (Object.keys(txn.payers).length > 1) {
                 const input = document.getElementById(`pay-amt-${person}`);
-                input.classList.remove('hidden');
-                input.value = amount;
+                if (input) {
+                    input.classList.remove('hidden');
+                    input.value = amount;
+                }
             }
         }
     }
 
-    const isEquallySplit = Object.values(txn.split).every(val => Math.abs(val - (txn.amount / Object.keys(txn.split).length)) < 0.1);
+    const participants = (appState.currentFest && appState.currentFest.participants) ? appState.currentFest.participants : [];
+    const splitKeys = Object.keys(txn.split || {});
+    const isAllParticipants = participants.length === splitKeys.length && participants.every(p => splitKeys.includes(p));
+    const isEquallySplit = isAllParticipants && Object.values(txn.split).every(val => Math.abs(val - (txn.amount / splitKeys.length)) < 0.1);
+
     document.getElementById('splitEquallyCheck').checked = isEquallySplit;
     toggleSplitMode();
 
-    if (!isEquallySplit) {
-        for (const [person, amount] of Object.entries(txn.split)) {
-            const input = document.getElementById(`split-amt-${person}`);
-            if (input) input.value = amount;
+    document.querySelectorAll('.split-user-check').forEach(chk => {
+        const hasSplit = txn.split && txn.split.hasOwnProperty(chk.value) && txn.split[chk.value] > 0;
+        chk.checked = isEquallySplit || hasSplit;
+        const input = document.getElementById(`split-amt-${chk.value}`);
+        if (input) {
+            input.value = (!isEquallySplit && hasSplit) ? txn.split[chk.value] : "";
         }
-    }
-}
-
-function renderPayerUI() {
-    const participants = appState.currentFest.participants;
-    const pContainer = document.getElementById('payer-selection-area');
-    const sContainer = document.getElementById('split-selection-area');
-    pContainer.innerHTML = ""; sContainer.innerHTML = "";
-
-    participants.forEach(p => {
-        pContainer.innerHTML += `<div class="user-select-row"><div class="flex"><input type="checkbox" class="payer-check" value="${p}" onchange="handlePayerChange()" style="width:20px; margin-right:10px;">${p}</div><input type="number" class="amount-manual payer-input hidden" id="pay-amt-${p}" placeholder="0"></div>`;
-        sContainer.innerHTML += `<div class="user-select-row"><span>${p}</span><input type="number" class="amount-manual split-input" id="split-amt-${p}" placeholder="0"></div>`;
     });
-}
 
-function handlePayerChange() {
-    const checked = document.querySelectorAll('.payer-check:checked');
-    document.querySelectorAll('.payer-input').forEach(i => i.classList.add('hidden'));
-    if (checked.length > 1) checked.forEach(chk => document.getElementById(`pay-amt-${chk.value}`).classList.remove('hidden'));
-}
-
-function toggleSplitMode() {
-    const isEqual = document.getElementById('splitEquallyCheck').checked;
-    const area = document.getElementById('split-selection-area');
-    if (isEqual) area.classList.add('hidden');
-    else area.classList.remove('hidden');
+    updateSplitCalculations();
 }
 
 function submitTransaction() {
-    if(!appState.adminPassword) return alert("Admin access required.");
+    if (!appState.adminPassword) return alert("Admin access required.");
     const fest = appState.currentFest;
-    const title = document.getElementById('expTitle').value;
+    const title = document.getElementById('expTitle').value.trim();
     const total = parseFloat(document.getElementById('expAmount').value);
-    const date = document.querySelector('.date-tab.active').dataset.date;
+    const activeTab = document.querySelector('.date-tab.active');
+    const date = activeTab ? activeTab.dataset.date : fest.startDate;
 
-    if (!title || !total) return alert("Enter details");
+    if (!title || isNaN(total) || total <= 0) return alert("Please enter a valid title and amount.");
 
     let payers = {};
     const checkedPayers = document.querySelectorAll('.payer-check:checked');
-    if (checkedPayers.length === 0) return alert("Who paid?");
-    
+    if (checkedPayers.length === 0) return alert("Who paid? Please select at least one payer.");
+
     let paidSum = 0;
     checkedPayers.forEach(chk => {
         let val = checkedPayers.length === 1 ? total : (parseFloat(document.getElementById(`pay-amt-${chk.value}`).value) || 0);
+        val = Math.round(val * 100) / 100;
         payers[chk.value] = val;
         paidSum += val;
     });
 
-    if (Math.abs(paidSum - total) > 1) return alert("Paid amount mismatch");
+    if (Math.abs(paidSum - total) > 1) return alert(`Paid amount mismatch: sum is ₹${paidSum}, but total is ₹${total}`);
 
     let split = {};
     if (document.getElementById('splitEquallyCheck').checked) {
-        fest.participants.forEach(p => split[p] = total / fest.participants.length);
+        const perPerson = Math.round((total / fest.participants.length) * 100) / 100;
+        fest.participants.forEach(p => split[p] = perPerson);
     } else {
-        let splitSum = 0;
-        document.querySelectorAll('.split-input').forEach(inp => {
-            let val = parseFloat(inp.value) || 0;
-            split[inp.id.replace('split-amt-', '')] = val;
-            splitSum += val;
+        const checkedSplitters = Array.from(document.querySelectorAll('.split-user-check:checked'));
+        if (checkedSplitters.length === 0) return alert("Select at least one participant to split with.");
+
+        let manualSum = 0;
+        const unassigned = [];
+
+        checkedSplitters.forEach(chk => {
+            const inp = document.getElementById(`split-amt-${chk.value}`);
+            const val = parseFloat(inp.value);
+            if (!isNaN(val) && inp.value.trim() !== "") {
+                const roundedVal = Math.round(val * 100) / 100;
+                split[chk.value] = roundedVal;
+                manualSum += roundedVal;
+            } else {
+                unassigned.push(chk.value);
+            }
         });
-        if (Math.abs(splitSum - total) > 1) return alert("Split amount mismatch");
+
+        const remaining = total - manualSum;
+        if (remaining < -0.01) {
+            return alert(`Assigned split amounts (₹${manualSum.toFixed(2)}) exceed total expense (₹${total})`);
+        }
+
+        if (unassigned.length > 0) {
+            const splitPerUnassigned = Math.round((remaining / unassigned.length) * 100) / 100;
+            unassigned.forEach(name => {
+                split[name] = splitPerUnassigned;
+                manualSum += splitPerUnassigned;
+            });
+        }
+
+        if (Math.abs(manualSum - total) > 1) {
+            return alert(`Split amount mismatch: total split is ₹${manualSum.toFixed(2)}, but expense is ₹${total}`);
+        }
     }
 
     if (appState.editingTxnId) {
-        const index = appState.transactions.findIndex(t => t.id === appState.editingTxnId);
+        const index = appState.transactions.findIndex(t => String(t.id) === String(appState.editingTxnId));
         if (index !== -1) {
             appState.transactions[index] = { ...appState.transactions[index], title, amount: total, payers, split };
-            
+
             const payload = { action: "editExpense", id: appState.editingTxnId, festId: fest.id, date: appState.transactions[index].date, title, amount: total, payers, split, password: appState.adminPassword };
             fetch(GOOGLE_SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
         }
@@ -436,7 +670,7 @@ function submitTransaction() {
         const id = Date.now().toString();
         const txn = { id, eventId: fest.id, date, title, amount: total, payers, split };
         appState.transactions.push(txn);
-        
+
         const payload = { action: "addExpense", id, festId: txn.eventId, date, title, amount: total, payers, split, password: appState.adminPassword };
         fetch(GOOGLE_SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
     }
@@ -451,32 +685,32 @@ function submitTransaction() {
 
 function renderAnalytics() {
     const txns = appState.transactions;
-    const total = txns.reduce((sum, t) => sum + parseFloat(t.amount), 0);
+    const total = txns.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
     document.getElementById('stat-total').innerText = `₹${total}`;
 
     let payerStats = {};
     txns.forEach(t => {
-        for(let [p, amt] of Object.entries(t.payers)) {
+        for (let [p, amt] of Object.entries(t.payers || {})) {
             payerStats[p] = (payerStats[p] || 0) + parseFloat(amt);
         }
     });
-    
+
     let whale = "-";
     if (Object.keys(payerStats).length > 0) {
-         whale = Object.keys(payerStats).reduce((a, b) => payerStats[a] > payerStats[b] ? a : b);
+        whale = Object.keys(payerStats).reduce((a, b) => payerStats[a] > payerStats[b] ? a : b);
     }
     document.getElementById('stat-whale').innerText = whale;
 
-    renderCalendar(); 
+    renderCalendar();
     renderChart(txns);
 }
 
 function renderChart(txns) {
     const ctx = document.getElementById('spendChart').getContext('2d');
     let daily = {};
-    txns.forEach(t => { daily[t.date] = (daily[t.date] || 0) + parseFloat(t.amount); });
+    txns.forEach(t => { daily[t.date] = (daily[t.date] || 0) + parseFloat(t.amount || 0); });
 
-    if(window.myChart) window.myChart.destroy();
+    if (window.myChart) window.myChart.destroy();
     window.myChart = new Chart(ctx, {
         type: 'bar',
         data: { labels: Object.keys(daily), datasets: [{ label: 'Spending', data: Object.values(daily), backgroundColor: '#bb86fc', borderRadius: 4 }] },
@@ -487,12 +721,11 @@ function renderChart(txns) {
 function renderCalendar() {
     const container = document.getElementById('calendar-months-container');
     container.innerHTML = "";
-    
+
     let dailyTotals = {};
-    appState.transactions.forEach(t => { dailyTotals[t.date] = (dailyTotals[t.date] || 0) + parseFloat(t.amount); });
+    appState.transactions.forEach(t => { dailyTotals[t.date] = (dailyTotals[t.date] || 0) + parseFloat(t.amount || 0); });
 
     const today = new Date();
-    // FIX 3: Start loop in local time
     let loopDate = new Date(today.getFullYear(), today.getMonth() - 11, 1);
 
     for (let i = 0; i < 12; i++) {
@@ -508,14 +741,13 @@ function renderCalendar() {
 
         const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
         const firstDayOfWeek = new Date(year, monthIndex, 1).getDay();
-        
-        for(let j=0; j<firstDayOfWeek; j++) grid.innerHTML += `<div class="heatmap-box empty"></div>`;
 
-        for(let day=1; day<=daysInMonth; day++) {
-            // FIX 4: Build date string manually for lookup
-            const dateStr = `${year}-${String(monthIndex+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        for (let j = 0; j < firstDayOfWeek; j++) grid.innerHTML += `<div class="heatmap-box empty"></div>`;
+
+        for (let day = 1; day <= daysInMonth; day++) {
+            const dateStr = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             const amount = dailyTotals[dateStr] || 0;
-            
+
             let level = 'level-0';
             if (amount > 0) level = 'level-1';
             if (amount > 500) level = 'level-2';
@@ -533,28 +765,30 @@ function renderCalendar() {
         container.appendChild(monthBlock);
         loopDate.setMonth(loopDate.getMonth() + 1);
     }
-    setTimeout(() => { document.querySelector('.heatmap-scroll-wrapper').scrollLeft = 9999; }, 150);
+    setTimeout(() => {
+        const wrapper = document.querySelector('.heatmap-scroll-wrapper');
+        if (wrapper) wrapper.scrollLeft = 9999;
+    }, 150);
 }
 
 const tooltipEl = document.getElementById('heatmap-tooltip');
 function showTooltip(e, date, amount) {
-    if(!tooltipEl) return;
-    // FIX 5: Tooltip also needs to parse date string as local parts
+    if (!tooltipEl) return;
     const parts = date.split('-');
-    const dateObj = new Date(parts[0], parts[1]-1, parts[2]);
+    const dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
     const dateText = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     tooltipEl.innerHTML = `<strong>${dateText}</strong><br>₹${amount}`;
     tooltipEl.style.display = 'block';
     moveTooltip(e);
 }
 function moveTooltip(e) {
-    if(!tooltipEl) return;
+    if (!tooltipEl) return;
     const x = e.clientX + 10;
     const y = e.clientY - 40;
     tooltipEl.style.left = (x + 100 > window.innerWidth ? e.clientX - 110 : x) + 'px';
     tooltipEl.style.top = y + 'px';
 }
-function hideTooltip() { if(tooltipEl) tooltipEl.style.display = 'none'; }
+function hideTooltip() { if (tooltipEl) tooltipEl.style.display = 'none'; }
 
 // --- SETTLEMENT LOGIC ---
 function showSettlementModal() {
@@ -566,7 +800,7 @@ function closeSettlementModal() { document.getElementById('settlement-modal').cl
 
 function calculateSettlement(festId, outputElementId) {
     if (!festId) return;
-    const festTxns = appState.transactions.filter(t => t.eventId === festId);
+    const festTxns = appState.transactions.filter(t => String(t.eventId) === String(festId));
     const container = document.getElementById(outputElementId);
 
     if (festTxns.length === 0) {
@@ -575,16 +809,18 @@ function calculateSettlement(festId, outputElementId) {
     }
 
     let bal = {}, spent = {}, consumed = {};
-    appState.currentFest.participants.forEach(m => { bal[m] = 0; spent[m]=0; consumed[m]=0; });
+    (appState.currentFest.participants || []).forEach(m => { bal[m] = 0; spent[m] = 0; consumed[m] = 0; });
 
     festTxns.forEach(tx => {
-        for (const [person, amount] of Object.entries(tx.payers)) {
-            let val = parseFloat(amount);
-            bal[person] += val; spent[person] += val;
+        for (const [person, amount] of Object.entries(tx.payers || {})) {
+            let val = parseFloat(amount) || 0;
+            bal[person] = (bal[person] || 0) + val;
+            spent[person] = (spent[person] || 0) + val;
         }
-        for (const [person, amount] of Object.entries(tx.split)) {
-            let val = parseFloat(amount);
-            bal[person] -= val; consumed[person] += val;
+        for (const [person, amount] of Object.entries(tx.split || {})) {
+            let val = parseFloat(amount) || 0;
+            bal[person] = (bal[person] || 0) - val;
+            consumed[person] = (consumed[person] || 0) + val;
         }
     });
 
@@ -595,7 +831,7 @@ function calculateSettlement(festId, outputElementId) {
     for (let p in bal) {
         bal[p] = Math.round(bal[p] * 100) / 100;
         let color = bal[p] >= 0 ? "#03dac6" : "#cf6679";
-        html += `<tr style="border-bottom:1px solid #333;"><td style="padding:5px;">${p}</td><td style="padding:5px; color:#aaa;">${Math.round(spent[p])}</td><td style="padding:5px; color:#aaa;">${Math.round(consumed[p])}</td><td style="padding:5px; color:${color}; font-weight:bold;">${bal[p]>0?'+':''}${bal[p]}</td></tr>`;
+        html += `<tr style="border-bottom:1px solid #333;"><td style="padding:5px;">${p}</td><td style="padding:5px; color:#aaa;">${Math.round(spent[p])}</td><td style="padding:5px; color:#aaa;">${Math.round(consumed[p])}</td><td style="padding:5px; color:${color}; font-weight:bold;">${bal[p] > 0 ? '+' : ''}${bal[p]}</td></tr>`;
     }
     html += `</table>`;
 
@@ -610,7 +846,7 @@ function calculateSettlement(festId, outputElementId) {
 
     let paymentHtml = `<h4 style="color:#a0a0a0; margin-bottom:10px; font-size:0.9rem; text-transform:uppercase;">Payments</h4>`;
     let i = 0, j = 0;
-    
+
     while (i < debtors.length && j < creditors.length) {
         let x = Math.min(debtors[i].amt, creditors[j].amt);
         x = Math.round(x * 100) / 100;

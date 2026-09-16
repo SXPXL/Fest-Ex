@@ -106,7 +106,8 @@
         <div style="background: var(--surface); padding: 15px 15px 0 15px; position:sticky; top:60px; z-index:90;">
             <div class="flex justify-between" style="margin-bottom:10px;">
                 <h3 id="fest-details-title" style="margin:0;">Fest Name</h3>
-                <div>
+                <div class="flex">
+                    <button id="delete-fest-header-btn" onclick="deleteFest(appState.currentFest.id)" class="hidden" style="width:auto; padding:5px 10px; margin-right:5px; background: #cf6679; color: #fff;" title="Delete Fest"><i class="fas fa-trash"></i></button>
                     <button onclick="showSettlementModal()" style="width:auto; padding:5px 10px; margin-right:5px; background: #03dac6; color: black;"><i class="fas fa-file-invoice-dollar"></i> Settle</button>
                     <button class="secondary" onclick="showPage('home')" style="width:auto; padding:5px 10px; margin:0;"><i class="fas fa-arrow-left"></i></button>
                 </div>
@@ -126,14 +127,18 @@
                     <div onclick="hideAddExpenseForm()" style="padding:10px; cursor:pointer;"><i class="fas fa-times"></i></div>
                 </div>
                 <input type="text" id="expTitle" placeholder="Title">
-                <input type="number" id="expAmount" placeholder="Amount (₹)">
+                <input type="number" id="expAmount" step="any" placeholder="Amount (₹)" oninput="updateSplitCalculations()">
                 
                 <h4>Who Paid?</h4>
                 <div id="payer-selection-area"></div>
                 <h4>Split</h4>
                 <div class="flex" style="margin-bottom:10px;">
                     <input type="checkbox" id="splitEquallyCheck" checked onchange="toggleSplitMode()" style="width:20px; margin:0;">
-                    <label for="splitEquallyCheck" style="margin-left:10px;">Split Equally</label>
+                    <label for="splitEquallyCheck" style="margin-left:10px; cursor:pointer;">Split Equally (All Participants)</label>
+                </div>
+                <div id="split-helper-container" class="hidden" style="margin-bottom:10px; padding: 6px 10px; background: #252525; border-radius: 6px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                    <span id="split-helper-info" style="font-size:0.8rem; color:var(--text-muted);"></span>
+                    <button type="button" onclick="autoFillRemainingSplit()" style="width:auto; padding:4px 8px; font-size:0.75rem; margin:0; background:var(--secondary); color:#000; border-radius:4px; white-space:nowrap;">Auto Split</button>
                 </div>
                 <div id="split-selection-area" class="hidden"></div>
                 <button onclick="submitTransaction()">Save Transaction</button>
