@@ -105,8 +105,12 @@
     <div id="page-fest-details" class="hidden">
         <div style="background: var(--surface); padding: 15px 15px 0 15px; position:sticky; top:60px; z-index:90;">
             <div class="flex justify-between" style="margin-bottom:10px;">
-                <h3 id="fest-details-title" style="margin:0;">Fest Name</h3>
+                <div class="flex" style="gap:8px;">
+                    <h3 id="fest-details-title" style="margin:0;">Fest Name</h3>
+                    <span id="fest-details-settled-badge" onclick="toggleFestSettled(appState.currentFest.id)" style="cursor:pointer; display:none; align-items:center; gap:4px; font-size:0.75rem; padding:2px 8px; border-radius:6px; font-weight:bold;"></span>
+                </div>
                 <div class="flex">
+                    <button id="toggle-settled-header-btn" onclick="toggleFestSettled(appState.currentFest.id)" class="hidden" style="width:auto; padding:5px 10px; margin-right:5px; font-size:0.8rem; border-radius:6px;"></button>
                     <button id="delete-fest-header-btn" onclick="deleteFest(appState.currentFest.id)" class="hidden" style="width:auto; padding:5px 10px; margin-right:5px; background: #cf6679; color: #fff;" title="Delete Fest"><i class="fas fa-trash"></i></button>
                     <button onclick="showSettlementModal()" style="width:auto; padding:5px 10px; margin-right:5px; background: #03dac6; color: black;"><i class="fas fa-file-invoice-dollar"></i> Settle</button>
                     <button class="secondary" onclick="showPage('home')" style="width:auto; padding:5px 10px; margin:0;"><i class="fas fa-arrow-left"></i></button>

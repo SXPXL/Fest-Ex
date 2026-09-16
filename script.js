@@ -40,6 +40,7 @@ async function init() {
         appState.fests = (data.fests || []).map(f => ({
             ...f,
             id: String(f.id),
+            settled: Boolean(f.settled === true || f.settled === "TRUE" || f.settled === "true" || f.settled === 1),
             startDate: getLocalISODate(new Date(f.startDate)),
             endDate: getLocalISODate(new Date(f.endDate))
         }));
@@ -81,10 +82,7 @@ function toggleAdminLogin() {
             if (appState.currentFest) {
                 const activeTab = document.querySelector('.date-tab.active');
                 renderExpenseList(activeTab ? activeTab.dataset.date : appState.currentFest.startDate);
-                const btn = document.getElementById('add-expense-btn');
-                if (btn) btn.classList.remove('hidden');
-                const delFestBtn = document.getElementById('delete-fest-header-btn');
-                if (delFestBtn) delFestBtn.classList.remove('hidden');
+                openFestDetails(appState.currentFest);
             }
             if (!document.getElementById('page-home').classList.contains('hidden')) renderHome();
         }
@@ -146,20 +144,39 @@ function renderHome() {
         card.className = 'card';
         card.style.position = 'relative';
         card.style.cursor = 'pointer';
+        if (fest.settled) {
+            card.style.borderLeft = '4px solid #03dac6';
+        }
+
+        let settledBadgeHtml = '';
+        if (fest.settled) {
+            settledBadgeHtml = `
+            <span onclick="event.stopPropagation(); toggleFestSettled('${fest.id}')" title="Settled (Click to unlock with EDIT)" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px; background: rgba(3, 218, 198, 0.15); border: 1px solid #03dac6; color: #03dac6; padding: 2px 7px; border-radius: 6px; font-size: 0.75rem; font-weight: bold;">
+                <i class="fas fa-check-circle"></i> SETTLED
+            </span>`;
+        } else if (appState.adminPassword) {
+            settledBadgeHtml = `
+            <span onclick="event.stopPropagation(); toggleFestSettled('${fest.id}')" title="Click to mark as SETTLED" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px; background: #252525; border: 1px solid #444; color: #888; padding: 2px 7px; border-radius: 6px; font-size: 0.75rem;">
+                <i class="far fa-circle"></i> Settle
+            </span>`;
+        }
 
         let deleteBtnHtml = '';
         if (appState.adminPassword) {
             deleteBtnHtml = `
-            <div onclick="event.stopPropagation(); deleteFest('${fest.id}')" title="Delete Fest" style="cursor: pointer; color: var(--error); padding: 5px 10px; font-size: 1.1rem; margin-left: 10px;">
+            <div onclick="event.stopPropagation(); deleteFest('${fest.id}')" title="Delete Fest" style="cursor: pointer; color: var(--error); padding: 5px 8px; font-size: 1.05rem;">
                 <i class="fas fa-trash"></i>
             </div>`;
         }
 
         card.innerHTML = `
-            <div class="flex justify-between">
+            <div class="flex justify-between" style="align-items: flex-start;">
                 <div style="flex:1;">
-                    <div class="flex justify-between" style="margin-bottom:5px;">
-                        <h3 style="margin:0; color:#bb86fc;">${fest.name}</h3>
+                    <div class="flex justify-between" style="margin-bottom:5px; flex-wrap:wrap; gap:6px;">
+                        <div class="flex" style="gap:8px; align-items:center;">
+                            <h3 style="margin:0; color:#bb86fc;">${fest.name}</h3>
+                            ${settledBadgeHtml}
+                        </div>
                         <span style="font-size:0.8rem; background:#333; padding:2px 6px; border-radius:4px;">${fest.startDate}</span>
                     </div>
                     <div style="color:#aaa; font-size:0.9rem;">${fest.participants ? fest.participants.length : 0} Participants</div>
@@ -169,6 +186,47 @@ function renderHome() {
         `;
         card.onclick = () => openFestDetails(fest);
         list.appendChild(card);
+    });
+}
+
+// ==========================================
+// SETTLED TOGGLE / LOCK LOGIC
+// ==========================================
+function toggleFestSettled(festId) {
+    if (!appState.adminPassword) return alert("Admin access required.");
+    const fest = appState.fests.find(f => String(f.id) === String(festId));
+    if (!fest) return;
+
+    if (!fest.settled) {
+        const input = prompt(`Type "SETTLED" to mark "${fest.name}" as settled (locks further edits):`);
+        if (input && input.trim().toUpperCase() === "SETTLED") {
+            fest.settled = true;
+            updateFestSettlementStatus(festId, true);
+        } else if (input !== null) {
+            alert('Incorrect text entered. You must type "SETTLED" to confirm.');
+        }
+    } else {
+        const input = prompt(`Type "EDIT" to unlock "${fest.name}" for edits:`);
+        if (input && input.trim().toUpperCase() === "EDIT") {
+            fest.settled = false;
+            updateFestSettlementStatus(festId, false);
+        } else if (input !== null) {
+            alert('Incorrect text entered. You must type "EDIT" to unlock.');
+        }
+    }
+}
+
+function updateFestSettlementStatus(festId, isSettled) {
+    if (!document.getElementById('page-home').classList.contains('hidden')) renderHome();
+    if (appState.currentFest && String(appState.currentFest.id) === String(festId)) {
+        appState.currentFest.settled = isSettled;
+        openFestDetails(appState.currentFest);
+    }
+
+    fetch(GOOGLE_SCRIPT_URL, {
+        method: "POST",
+        mode: "no-cors",
+        body: JSON.stringify({ action: "toggleFestSettled", id: festId, settled: isSettled, password: appState.adminPassword })
     });
 }
 
@@ -240,7 +298,7 @@ function saveFestSetup() {
 
     if (!name || !start || participants.length === 0) return alert("Fill details & select friends");
 
-    const fest = { id: Date.now().toString(), name, startDate: start, endDate: end || start, participants };
+    const fest = { id: Date.now().toString(), name, startDate: start, endDate: end || start, participants, settled: false };
     appState.fests.push(fest);
 
     fetch(GOOGLE_SCRIPT_URL, {
@@ -264,9 +322,48 @@ function openFestDetails(fest) {
     document.getElementById('view-fest-list').classList.remove('hidden');
     document.getElementById('view-add-expense').classList.add('hidden');
 
+    // Settled Header Badge & Toggle Button
+    const settledBadge = document.getElementById('fest-details-settled-badge');
+    const toggleSettledBtn = document.getElementById('toggle-settled-header-btn');
+    if (settledBadge) {
+        if (fest.settled) {
+            settledBadge.style.display = 'inline-flex';
+            settledBadge.style.background = 'rgba(3, 218, 198, 0.15)';
+            settledBadge.style.border = '1px solid #03dac6';
+            settledBadge.style.color = '#03dac6';
+            settledBadge.innerHTML = '<i class="fas fa-check-circle"></i> SETTLED (LOCKED)';
+            settledBadge.title = "Click to unlock with EDIT";
+        } else {
+            settledBadge.style.display = 'none';
+        }
+    }
+
+    if (toggleSettledBtn) {
+        if (appState.adminPassword) {
+            toggleSettledBtn.classList.remove('hidden');
+            if (fest.settled) {
+                toggleSettledBtn.innerHTML = '<i class="fas fa-lock-open"></i> Unlock';
+                toggleSettledBtn.style.background = "#444";
+                toggleSettledBtn.style.color = "#03dac6";
+                toggleSettledBtn.title = 'Type "EDIT" to unlock';
+            } else {
+                toggleSettledBtn.innerHTML = '<i class="far fa-check-circle"></i> Settle';
+                toggleSettledBtn.style.background = "#2a2a2a";
+                toggleSettledBtn.style.color = "#ccc";
+                toggleSettledBtn.title = 'Type "SETTLED" to lock';
+            }
+        } else {
+            toggleSettledBtn.classList.add('hidden');
+        }
+    }
+
+    // Add expense button (hidden if fest is settled or not admin)
     const addBtn = document.getElementById('add-expense-btn');
-    if (appState.adminPassword) addBtn.classList.remove('hidden');
-    else addBtn.classList.add('hidden');
+    if (appState.adminPassword && !fest.settled) {
+        addBtn.classList.remove('hidden');
+    } else {
+        addBtn.classList.add('hidden');
+    }
 
     const delFestBtn = document.getElementById('delete-fest-header-btn');
     if (delFestBtn) {
@@ -313,6 +410,8 @@ function renderExpenseList(dateStr) {
         return;
     }
 
+    const isLocked = appState.currentFest && appState.currentFest.settled;
+
     dailyTxns.forEach(t => {
         let payerText = Object.keys(t.payers).join(", ");
         if (Object.keys(t.payers).length > 2) payerText = "Multiple";
@@ -323,7 +422,7 @@ function renderExpenseList(dateStr) {
         item.style.position = "relative";
 
         let actionsHtml = "";
-        if (appState.adminPassword) {
+        if (appState.adminPassword && !isLocked) {
             actionsHtml = `
             <div style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); display:flex; gap:15px;">
                 <div onclick="editTransaction('${t.id}')" style="cursor: pointer; color: var(--primary);">
@@ -336,7 +435,7 @@ function renderExpenseList(dateStr) {
         }
 
         item.innerHTML = `
-            <div class="flex justify-between" style="padding-right: ${appState.adminPassword ? '60px' : '0'};">
+            <div class="flex justify-between" style="padding-right: ${(appState.adminPassword && !isLocked) ? '60px' : '0'};">
                 <span style="font-weight:bold; font-size:1.1rem;">${t.title}</span>
                 <span style="color:var(--secondary); font-weight:bold;">₹${t.amount}</span>
             </div>
@@ -353,6 +452,9 @@ function renderExpenseList(dateStr) {
 
 function deleteTransaction(txnId) {
     if (!appState.adminPassword) return;
+    if (appState.currentFest && appState.currentFest.settled) {
+        return alert('This fest is marked as SETTLED and locked. Unlock with "EDIT" before deleting.');
+    }
     if (!confirm("Delete expense?")) return;
 
     appState.transactions = appState.transactions.filter(t => String(t.id) !== String(txnId));
@@ -368,6 +470,9 @@ function deleteTransaction(txnId) {
 
 function showAddExpenseForm() {
     if (!appState.adminPassword) return;
+    if (appState.currentFest && appState.currentFest.settled) {
+        return alert('This fest is marked as SETTLED and locked. Unlock with "EDIT" before adding expenses.');
+    }
     document.getElementById('view-fest-list').classList.add('hidden');
     document.getElementById('view-add-expense').classList.remove('hidden');
     document.getElementById('expense-form-title').innerText = "New Expense";
@@ -545,6 +650,9 @@ function handleSplitKeydown(event) {
 
 function editTransaction(txnId) {
     if (!appState.adminPassword) return;
+    if (appState.currentFest && appState.currentFest.settled) {
+        return alert('This fest is marked as SETTLED and locked. Unlock with "EDIT" before making changes.');
+    }
     const txn = appState.transactions.find(t => String(t.id) === String(txnId));
     if (!txn) return;
 
@@ -596,6 +704,9 @@ function editTransaction(txnId) {
 function submitTransaction() {
     if (!appState.adminPassword) return alert("Admin access required.");
     const fest = appState.currentFest;
+    if (fest && fest.settled) {
+        return alert('This fest is marked as SETTLED and locked. Unlock with "EDIT" before submitting expenses.');
+    }
     const title = document.getElementById('expTitle').value.trim();
     const total = parseFloat(document.getElementById('expAmount').value);
     const activeTab = document.querySelector('.date-tab.active');
